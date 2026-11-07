@@ -7,6 +7,7 @@
         <AssemblyName>MGAutoSell.Tests</AssemblyName>
         <RootNamespace>MGAutoSell.Tests</RootNamespace>
         <Version>1.7</Version>
+        <GenerateProgramFile>false</GenerateProgramFile>
     </PropertyGroup>
 
     <ItemGroup>

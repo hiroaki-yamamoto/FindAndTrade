@@ -392,6 +392,7 @@ namespace MGAutoSell.Presets
                 return string.Empty;
             }
 
+            name = name.Trim();
             try
             {
                 return GenFile.SanitizedFileName(name);

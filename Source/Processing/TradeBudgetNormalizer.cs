@@ -87,7 +87,8 @@ namespace MGAutoSell.Processing
             Dictionary<Tradeable, TradeRule> pairings,
             int currencyGap,
             ITradeInventoryAggregator aggregator,
-            Action<Tradeable, int> setTradeCount)
+            Action<Tradeable, int> setTradeCount,
+            Func<Tradeable, float> costEvaluator = null)
         {
             if (orders == null || orders.Count == 0 || setTradeCount == null)
             {
@@ -102,9 +103,11 @@ namespace MGAutoSell.Processing
                 return orders.Count > 0;
             }
 
-            float cost = Math.Max(
-                item.Tradeable.CurTotalCurrencyCostForSource,
-                item.Tradeable.CurTotalCurrencyCostForDestination);
+            float cost = costEvaluator != null
+                ? costEvaluator(item.Tradeable)
+                : Math.Max(
+                    item.Tradeable.CurTotalCurrencyCostForSource,
+                    item.Tradeable.CurTotalCurrencyCostForDestination);
 
             TradeRule matchedRule = null;
             pairings?.TryGetValue(item.Tradeable, out matchedRule);
@@ -126,7 +129,7 @@ namespace MGAutoSell.Processing
             }
             else
             {
-                item.Count = newTransferCount;
+                item.Count = Math.Abs(newTransferCount);
             }
 
             return true;

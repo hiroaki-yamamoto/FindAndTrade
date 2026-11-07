@@ -42,21 +42,24 @@ namespace MGAutoSell.Tests
         }
 
         [TestMethod]
-        public void ThingDefAggregation_TracksCountsPerThingDefIndependently()
+        public void ThingDefAggregation_TracksCountsPerThingDefIndependentlyAndHandlesNullDef()
         {
             var aggregator = new TradeInventoryAggregator();
             var steelDef = TestHelper.CreateThingDef("Steel");
             var plasteelDef = TestHelper.CreateThingDef("Plasteel");
             var rule = new TradeRule { Aggregation = TradeRuleAggregation.ThingDef };
 
+            Assert.IsFalse(aggregator.TryAddInitialCount(null, 50));
             Assert.IsTrue(aggregator.TryAddInitialCount(steelDef, 100));
             Assert.IsFalse(aggregator.TryAddInitialCount(steelDef, 999)); // Should not overwrite existing initial count
             Assert.IsTrue(aggregator.TryAddInitialCount(plasteelDef, 40));
 
+            Assert.AreEqual(0, aggregator.GetCount(rule, null));
             Assert.AreEqual(100, aggregator.GetCount(rule, steelDef));
             Assert.AreEqual(40, aggregator.GetCount(rule, plasteelDef));
 
-            aggregator.AddCount(rule, steelDef, -35);
+            aggregator.AddCount(rule, null, -10); // No-op when def is null
+            aggregator.AddCount(null, steelDef, -35); // Null rule defaults to ThingDef aggregation
             Assert.AreEqual(65, aggregator.GetCount(rule, steelDef));
             Assert.AreEqual(40, aggregator.GetCount(rule, plasteelDef));
         }
@@ -80,12 +83,16 @@ namespace MGAutoSell.Tests
         }
 
         [TestMethod]
-        public void GetCount_NullRule_ThrowsArgumentNullException()
+        public void GetCount_And_AddCount_InvalidInputs_ThrowExpectedExceptions()
         {
             var aggregator = new TradeInventoryAggregator();
             var def = TestHelper.CreateThingDef("Silver");
 
             Assert.ThrowsException<ArgumentNullException>(() => aggregator.GetCount(null, def));
+
+            var invalidRule = new TradeRule { Aggregation = (TradeRuleAggregation)999 };
+            Assert.ThrowsException<ArgumentOutOfRangeException>(() => aggregator.GetCount(invalidRule, def));
+            Assert.ThrowsException<ArgumentOutOfRangeException>(() => aggregator.AddCount(invalidRule, def, 10));
         }
 
         [TestMethod]

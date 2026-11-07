@@ -59,13 +59,26 @@ namespace MGAutoSell
         private static readonly MethodInfo PropertySetter =
             AccessTools.PropertySetter(typeof(Tradeable), nameof(Tradeable.CountToTransfer));
 
-        private static readonly string Gray = ColorUtility.ToHtmlStringRGB(TradeUI.NoTradeColor);
+        private static string _gray;
+        private static string Gray => _gray ??= SafeGetGrayHex();
 
-        private static readonly string
-            Spent = "MGAutoSell.Spent".Translate(),
-            Earned = "MGAutoSell.Earned".Translate(),
-            Bought = "MGAutoSell.Bought".Translate(),
-            Sold = "MGAutoSell.Sold".Translate();
+        private static string _spent, _earned, _bought, _sold;
+        private static string Spent => _spent ??= "MGAutoSell.Spent".Translate();
+        private static string Earned => _earned ??= "MGAutoSell.Earned".Translate();
+        private static string Bought => _bought ??= "MGAutoSell.Bought".Translate();
+        private static string Sold => _sold ??= "MGAutoSell.Sold".Translate();
+
+        private static string SafeGetGrayHex()
+        {
+            try
+            {
+                return ColorUtility.ToHtmlStringRGB(TradeUI.NoTradeColor);
+            }
+            catch
+            {
+                return "808080";
+            }
+        }
 
         /// <summary>
         /// Gets or sets the <see cref="ITradeInventoryAggregator"/> responsible for tracking item counts during trade sessions.
@@ -333,7 +346,6 @@ namespace MGAutoSell
                 (x.thingsTrader == null || x.thingsTrader.Count == 0));
 
             var pairings = new Dictionary<Tradeable, TradeRule>();
-            var claimedTradeables = new HashSet<Tradeable>();
             bool scanEveryStack = Mod.Settings?.scanEveryStack ?? true;
 
             foreach (var rule in autoTrade.tradeRules)
@@ -344,144 +356,24 @@ namespace MGAutoSell
                 }
 
                 var items = scanEveryStack
-                    ? CollectEntriesByScanningStacks(deal, itemCache, rule)
+                    ? CollectEntriesByScanningStacks(deal.AllTradeables, itemCache, rule)
                     : CollectEntriesByFirstItem(itemCache, rule);
 
-                if (rule.Aggregation == TradeRuleAggregation.Rule)
-                {
-                    for (int i = 0; i < items.Count; i++)
-                    {
-                        var entry = items[i];
-                        InventoryAggregator.AddCount(rule, entry.ThingDef, entry.ColonyCount);
-                    }
-                }
-
-                claimedTradeables.Clear();
-                var sellOrders = new List<(Tradeable Tradeable, int Count)>();
-
-                if (rule.AllowSell)
-                {
-                    bool hasTradeQueries = rule.search.TradeQueries.Length > 0;
-                    int writeIdx = 0;
-
-                    for (int i = 0; i < items.Count; i++)
-                    {
-                        var entry = items[i];
-                        int currentStock = InventoryAggregator.GetCount(rule, entry.ThingDef);
-                        if (currentStock > rule.Export &&
-                            (!hasTradeQueries || rule.search.AppliesTo(new TradeContext(deal, entry.Tradeable, TradeAction.PlayerSells))))
-                        {
-                            int sellQty = OrderCalculator.CalculateSellQuantity(currentStock, rule.Export, entry.ColonyCount);
-                            InventoryAggregator.AddCount(rule, entry.ThingDef, -sellQty);
-                            sellOrders.Add((entry.Tradeable, sellQty));
-                            claimedTradeables.Add(entry.Tradeable);
-                            pairings.TryAdd(entry.Tradeable, rule);
-                        }
-                        else
-                        {
-                            items[writeIdx++] = entry;
-                        }
-                    }
-
-                    if (writeIdx < items.Count)
-                    {
-                        items.RemoveRange(writeIdx, items.Count - writeIdx);
-                    }
-
-                    if (claimedTradeables.Count > 0)
-                    {
-                        itemCache.RemoveAll(claimedTradeables.Contains);
-                    }
-                }
-
-                for (int i = 0; i < sellOrders.Count; i++)
-                {
-                    var (tradeable, count) = sellOrders[i];
-                    if (!sellDictionary.TryAdd(tradeable, count))
-                    {
-                        sellDictionary[tradeable] += count;
-                    }
-                }
-
-                // Single-pass stock addition for extra items on the map (no GroupBy allocation needed).
-                for (int i = 0; i < itemsOnMap.Count; i++)
-                {
-                    var mapItem = itemsOnMap[i];
-                    if (rule.search.AppliesTo(mapItem, mapItem.Map))
-                    {
-                        InventoryAggregator.AddCount(rule, mapItem.def, mapItem.stackCount);
-                    }
-                }
-
-                var buyOrders = new List<(Tradeable Tradeable, int Count)>();
-                if (doBuy && rule.AllowBuy)
-                {
-                    claimedTradeables.Clear();
-                    bool hasTradeQueries = rule.search.TradeQueries.Length > 0;
-
-                    for (int i = 0; i < items.Count; i++)
-                    {
-                        var entry = items[i];
-                        int currentStock = InventoryAggregator.GetCount(rule, entry.ThingDef);
-                        if (currentStock < rule.Import &&
-                            (!hasTradeQueries || rule.search.AppliesTo(new TradeContext(deal, entry.Tradeable, TradeAction.PlayerBuys))))
-                        {
-                            int buyQty = OrderCalculator.CalculateBuyQuantity(currentStock, rule.Import, entry.TraderCount);
-                            InventoryAggregator.AddCount(rule, entry.ThingDef, buyQty);
-                            buyOrders.Add((entry.Tradeable, buyQty));
-                            claimedTradeables.Add(entry.Tradeable);
-                        }
-                    }
-
-                    if (claimedTradeables.Count > 0)
-                    {
-                        itemCache.RemoveAll(claimedTradeables.Contains);
-                    }
-                }
-
-                for (int i = 0; i < buyOrders.Count; i++)
-                {
-                    var (tradeable, count) = buyOrders[i];
-                    if (!buyDictionary.TryAdd(tradeable, count))
-                    {
-                        buyDictionary[tradeable] += count;
-                    }
-                }
-
-                // Remove rule labels from entries that resulted in neither a sell nor a buy order.
-                for (int i = 0; i < items.Count; i++)
-                {
-                    var candidate = items[i].Tradeable;
-                    bool inSell = false;
-                    for (int s = 0; s < sellOrders.Count; s++)
-                    {
-                        if (sellOrders[s].Tradeable == candidate)
-                        {
-                            inSell = true;
-                            break;
-                        }
-                    }
-
-                    if (inSell)
-                    {
-                        continue;
-                    }
-
-                    bool inBuy = false;
-                    for (int b = 0; b < buyOrders.Count; b++)
-                    {
-                        if (buyOrders[b].Tradeable == candidate)
-                        {
-                            inBuy = true;
-                            break;
-                        }
-                    }
-
-                    if (!inBuy)
-                    {
-                        AddRuleLabelsToTradeUI.ExtraLabels.Remove(candidate);
-                    }
-                }
+                ProcessRuleEntries(
+                    rule,
+                    items,
+                    itemCache,
+                    itemsOnMap,
+                    doBuy,
+                    InventoryAggregator,
+                    OrderCalculator,
+                    sellDictionary,
+                    buyDictionary,
+                    pairings,
+                    mapItemMatcher: static (r, m) => r.search.AppliesTo(m, m.Map),
+                    tradeContextMatcher: (r, entry, action) =>
+                        r.search.TradeQueries.Length == 0 ||
+                        r.search.AppliesTo(new TradeContext(deal, entry.Tradeable, action)));
             }
 
             foreach (var (tradeable, toSell) in sellDictionary)
@@ -544,37 +436,225 @@ namespace MGAutoSell
             // Sell marked items first: sort in-place only when there are multiple colony stacks.
             for (int i = 0; i < deal.AllTradeables.Count; i++)
             {
-                var colonyList = deal.AllTradeables[i].thingsColony;
-                if (colonyList is { Count: > 1 })
-                {
-                    colonyList.Sort((a, b) =>
-                    {
-                        bool aNotJunk = !CacheUtility.IsDesignatedJunk(a, junkDesignations);
-                        bool bNotJunk = !CacheUtility.IsDesignatedJunk(b, junkDesignations);
-                        return aNotJunk.CompareTo(bNotJunk);
-                    });
-                }
+                SortColonyThingsJunkFirst(deal.AllTradeables[i].thingsColony, junkDesignations);
             }
         }
 
-        private static List<TradeEntry> CollectEntriesByScanningStacks(
-            TradeDeal deal,
+        /// <summary>
+        /// Evaluates a single <paramref name="rule"/> against its matched <paramref name="items"/>, computing sell and buy
+        /// quantities, updating <paramref name="aggregator"/> stock counts, removing claimed tradeables from
+        /// <paramref name="itemCache"/>, and cleaning up unused UI rule labels.
+        /// </summary>
+        /// <remarks>
+        /// Time Complexity: O(E + M) where E is the number of matched trade entries and M is the number of non-tradeable map items.
+        /// Space Complexity: O(E) for sell and buy order buffers.
+        /// </remarks>
+        internal static void ProcessRuleEntries(
+            TradeRule rule,
+            List<TradeEntry> items,
             List<Tradeable> itemCache,
-            TradeRule rule)
+            IReadOnlyList<Thing> itemsOnMap,
+            bool doBuy,
+            ITradeInventoryAggregator aggregator,
+            ITradeOrderCalculator calculator,
+            Dictionary<Tradeable, int> sellDictionary,
+            Dictionary<Tradeable, int> buyDictionary,
+            Dictionary<Tradeable, TradeRule> pairings,
+            Func<TradeRule, Thing, bool> mapItemMatcher = null,
+            Func<TradeRule, TradeEntry, TradeAction, bool> tradeContextMatcher = null)
         {
-            var items = new List<TradeEntry>();
-            string ruleTag = null;
-
-            for (int i = 0; i < itemCache.Count; i++)
+            if (rule == null || items == null)
             {
-                var tradeable = itemCache[i];
-                if (tradeable.IsCurrency || AddRuleLabelsToTradeUI.ExtraLabels.ContainsKey(tradeable))
+                return;
+            }
+
+            mapItemMatcher ??= static (r, m) => r.search != null && r.search.AppliesTo(m, m.Map);
+            tradeContextMatcher ??= static (_, _, _) => true;
+
+            if (rule.Aggregation == TradeRuleAggregation.Rule)
+            {
+                for (int i = 0; i < items.Count; i++)
+                {
+                    var entry = items[i];
+                    aggregator.AddCount(rule, entry.ThingDef, entry.ColonyCount);
+                }
+            }
+
+            var claimedTradeables = new HashSet<Tradeable>();
+            var sellOrders = new List<(Tradeable Tradeable, int Count)>();
+
+            if (rule.AllowSell)
+            {
+                int writeIdx = 0;
+
+                for (int i = 0; i < items.Count; i++)
+                {
+                    var entry = items[i];
+                    int currentStock = aggregator.GetCount(rule, entry.ThingDef);
+                    if (currentStock > rule.Export && tradeContextMatcher(rule, entry, TradeAction.PlayerSells))
+                    {
+                        int sellQty = calculator.CalculateSellQuantity(currentStock, rule.Export, entry.ColonyCount);
+                        aggregator.AddCount(rule, entry.ThingDef, -sellQty);
+                        sellOrders.Add((entry.Tradeable, sellQty));
+                        claimedTradeables.Add(entry.Tradeable);
+                        pairings?.TryAdd(entry.Tradeable, rule);
+                    }
+                    else
+                    {
+                        items[writeIdx++] = entry;
+                    }
+                }
+
+                if (writeIdx < items.Count)
+                {
+                    items.RemoveRange(writeIdx, items.Count - writeIdx);
+                }
+
+                if (claimedTradeables.Count > 0 && itemCache != null)
+                {
+                    itemCache.RemoveAll(claimedTradeables.Contains);
+                }
+            }
+
+            for (int i = 0; i < sellOrders.Count; i++)
+            {
+                var (tradeable, count) = sellOrders[i];
+                if (!sellDictionary.TryAdd(tradeable, count))
+                {
+                    sellDictionary[tradeable] += count;
+                }
+            }
+
+            // Single-pass stock addition for extra items on the map (no GroupBy allocation needed).
+            if (itemsOnMap != null)
+            {
+                for (int i = 0; i < itemsOnMap.Count; i++)
+                {
+                    var mapItem = itemsOnMap[i];
+                    if (mapItem != null && mapItemMatcher(rule, mapItem))
+                    {
+                        aggregator.AddCount(rule, mapItem.def, mapItem.stackCount);
+                    }
+                }
+            }
+
+            var buyOrders = new List<(Tradeable Tradeable, int Count)>();
+            if (doBuy && rule.AllowBuy)
+            {
+                claimedTradeables.Clear();
+
+                for (int i = 0; i < items.Count; i++)
+                {
+                    var entry = items[i];
+                    int currentStock = aggregator.GetCount(rule, entry.ThingDef);
+                    if (currentStock < rule.Import && tradeContextMatcher(rule, entry, TradeAction.PlayerBuys))
+                    {
+                        int buyQty = calculator.CalculateBuyQuantity(currentStock, rule.Import, entry.TraderCount);
+                        aggregator.AddCount(rule, entry.ThingDef, buyQty);
+                        buyOrders.Add((entry.Tradeable, buyQty));
+                        claimedTradeables.Add(entry.Tradeable);
+                    }
+                }
+
+                if (claimedTradeables.Count > 0 && itemCache != null)
+                {
+                    itemCache.RemoveAll(claimedTradeables.Contains);
+                }
+            }
+
+            for (int i = 0; i < buyOrders.Count; i++)
+            {
+                var (tradeable, count) = buyOrders[i];
+                if (!buyDictionary.TryAdd(tradeable, count))
+                {
+                    buyDictionary[tradeable] += count;
+                }
+            }
+
+            // Remove rule labels from entries that resulted in neither a sell nor a buy order.
+            for (int i = 0; i < items.Count; i++)
+            {
+                var candidate = items[i].Tradeable;
+                bool inSell = false;
+                for (int s = 0; s < sellOrders.Count; s++)
+                {
+                    if (sellOrders[s].Tradeable == candidate)
+                    {
+                        inSell = true;
+                        break;
+                    }
+                }
+
+                if (inSell)
                 {
                     continue;
                 }
 
-                PartitionStacks(tradeable.thingsColony, rule.search, out var matchedColonyStacks, out var unmatchedColonyStacks);
-                PartitionStacks(tradeable.thingsTrader, rule.search, out var matchedTraderStacks, out var unmatchedTraderStacks);
+                bool inBuy = false;
+                for (int b = 0; b < buyOrders.Count; b++)
+                {
+                    if (buyOrders[b].Tradeable == candidate)
+                    {
+                        inBuy = true;
+                        break;
+                    }
+                }
+
+                if (!inBuy)
+                {
+                    AddRuleLabelsToTradeUI.ExtraLabels.Remove(candidate);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Sorts <paramref name="colonyList"/> in-place so that items designated as junk appear before non-junk items.
+        /// </summary>
+        /// <remarks>
+        /// Time Complexity: O(C log C) where C is the number of stacks in <paramref name="colonyList"/> (or O(1) when C &lt;= 1).
+        /// Space Complexity: O(1).
+        /// </remarks>
+        internal static void SortColonyThingsJunkFirst(List<Thing> colonyList, HashSet<Thing> junkDesignations)
+        {
+            if (colonyList is not { Count: > 1 })
+            {
+                return;
+            }
+
+            colonyList.Sort((a, b) =>
+            {
+                bool aNotJunk = !CacheUtility.IsDesignatedJunk(a, junkDesignations);
+                bool bNotJunk = !CacheUtility.IsDesignatedJunk(b, junkDesignations);
+                return aNotJunk.CompareTo(bNotJunk);
+            });
+        }
+
+        internal static List<TradeEntry> CollectEntriesByScanningStacks(
+            List<Tradeable> allTradeables,
+            IReadOnlyList<Tradeable> itemCache,
+            TradeRule rule,
+            Func<Thing, bool> stackMatcher = null)
+        {
+            var items = new List<TradeEntry>();
+            if (itemCache == null || rule == null)
+            {
+                return items;
+            }
+
+            stackMatcher ??= stack => rule.search.AppliesTo(stack, stack.Map);
+            string ruleTag = null;
+            string ruleName = rule.search?.name ?? string.Empty;
+
+            for (int i = 0; i < itemCache.Count; i++)
+            {
+                var tradeable = itemCache[i];
+                if (tradeable == null || tradeable.IsCurrency || AddRuleLabelsToTradeUI.ExtraLabels.ContainsKey(tradeable))
+                {
+                    continue;
+                }
+
+                PartitionStacks(tradeable.thingsColony, stackMatcher, out var matchedColonyStacks, out var unmatchedColonyStacks);
+                PartitionStacks(tradeable.thingsTrader, stackMatcher, out var matchedTraderStacks, out var unmatchedTraderStacks);
 
                 bool matchedColony = matchedColonyStacks is { Count: > 0 };
                 bool unmatchedColony = unmatchedColonyStacks is { Count: > 0 };
@@ -590,7 +670,7 @@ namespace MGAutoSell
                 // Claim full Tradeable
                 if (!unmatchedColony && !unmatchedTrader)
                 {
-                    ruleTag ??= $"<i><color=#{Gray}> - ({rule.search.name})</color></i>";
+                    ruleTag ??= $"<i><color=#{Gray}> - ({ruleName})</color></i>";
                     AddRuleLabelsToTradeUI.ExtraLabels[tradeable] = ruleTag;
                     items.Add(new TradeEntry(
                         tradeable,
@@ -615,10 +695,10 @@ namespace MGAutoSell
                         throw new InvalidOperationException("Empty tradeable produced while splitting stacks.");
                     }
 
-                    ruleTag ??= $"<i><color=#{Gray}> - ({rule.search.name})</color></i>";
+                    ruleTag ??= $"<i><color=#{Gray}> - ({ruleName})</color></i>";
                     AddRuleLabelsToTradeUI.ExtraLabels[claimedTradeable] = ruleTag;
 
-                    deal.AllTradeables.Add(claimedTradeable);
+                    allTradeables?.Add(claimedTradeable);
                     items.Add(new TradeEntry(
                         claimedTradeable,
                         claimedTradeable.ThingDef,
@@ -630,15 +710,27 @@ namespace MGAutoSell
             return items;
         }
 
-        private static List<TradeEntry> CollectEntriesByFirstItem(List<Tradeable> itemCache, TradeRule rule)
+        internal static List<TradeEntry> CollectEntriesByFirstItem(
+            IReadOnlyList<Tradeable> itemCache,
+            TradeRule rule,
+            HashSet<Thing> junkSet = null,
+            Func<Thing, bool> itemMatcher = null)
         {
             var items = new List<TradeEntry>();
+            if (itemCache == null || rule == null)
+            {
+                return items;
+            }
+
+            itemMatcher ??= thing => rule.search.AppliesTo(thing);
+
             for (int i = 0; i < itemCache.Count; i++)
             {
                 var tradeable = itemCache[i];
-                if (!tradeable.IsCurrency &&
-                    tradeable.AnyThingNotJunk(out var thing) &&
-                    rule.search.AppliesTo(thing))
+                if (tradeable != null &&
+                    !tradeable.IsCurrency &&
+                    tradeable.AnyThingNotJunk(out var thing, junkSet) &&
+                    itemMatcher(thing))
                 {
                     items.Add(new TradeEntry(
                         tradeable,
@@ -655,15 +747,15 @@ namespace MGAutoSell
         /// Partitions a list of <see cref="Thing"/> stacks into matching and non-matching lists in a single O(S) pass,
         /// allocating lists lazily only when elements exist for that partition.
         /// </summary>
-        private static void PartitionStacks(
-            List<Thing> source,
-            TradeQuerySearch search,
+        internal static void PartitionStacks(
+            IReadOnlyList<Thing> source,
+            Func<Thing, bool> predicate,
             out List<Thing> matched,
             out List<Thing> unmatched)
         {
             matched = null;
             unmatched = null;
-            if (source == null || source.Count == 0)
+            if (source == null || source.Count == 0 || predicate == null)
             {
                 return;
             }
@@ -671,7 +763,7 @@ namespace MGAutoSell
             for (int i = 0; i < source.Count; i++)
             {
                 var stack = source[i];
-                if (search.AppliesTo(stack, stack.Map))
+                if (predicate(stack))
                 {
                     matched ??= [];
                     matched.Add(stack);
@@ -742,8 +834,8 @@ namespace MGAutoSell
             DoLetter(trader, socialPawn, deal, socialPawn.Position, buy, sell, silver);
         }
 
-        private static void ExtractExecutedTransfers(
-            List<Tradeable> allTradeables,
+        internal static void ExtractExecutedTransfers(
+            IReadOnlyList<Tradeable> allTradeables,
             out List<(string label, int count)> buy,
             out List<(string label, int count)> sell)
         {
@@ -757,23 +849,24 @@ namespace MGAutoSell
             for (int i = 0; i < allTradeables.Count; i++)
             {
                 var tradeable = allTradeables[i];
-                if (tradeable.IsCurrency || tradeable.CountToTransfer == 0)
+                if (tradeable == null || tradeable.IsCurrency || tradeable.CountToTransfer == 0)
                 {
                     continue;
                 }
 
+                string label = tradeable.ThingDef?.label ?? tradeable.ThingDef?.defName ?? string.Empty;
                 if (tradeable.CountToTransfer > 0)
                 {
-                    buy.Add((tradeable.ThingDef.label, tradeable.CountToTransfer));
+                    buy.Add((label, tradeable.CountToTransfer));
                 }
                 else
                 {
-                    sell.Add((tradeable.ThingDef.label, tradeable.CountToTransfer));
+                    sell.Add((label, tradeable.CountToTransfer));
                 }
             }
         }
 
-        private static void SetTradeCount(Tradeable tradeable, int count)
+        internal static void SetTradeCount(Tradeable tradeable, int count)
         {
             PropertySetter.Invoke(tradeable, [count]);
         }

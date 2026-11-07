@@ -35,7 +35,7 @@ namespace MGAutoSell.Tests
         }
 
         [TestMethod]
-        public void FromString_And_ToString_RoundTripsCorrectly()
+        public void FromString_And_ToString_RoundTripsAndHandlesCaseAndWhitespace()
         {
             var original = new PriceTypeRange(PriceType.Cheap, PriceType.Expensive);
             string serialized = original.ToString();
@@ -44,9 +44,14 @@ namespace MGAutoSell.Tests
 
             var parsed = PriceTypeRange.FromString(serialized);
             Assert.AreEqual(original, parsed);
+            Assert.IsTrue(original.Equals((object)parsed));
+            Assert.IsFalse(original.Equals("not a range"));
             Assert.IsTrue(original == parsed);
             Assert.IsFalse(original != parsed);
             Assert.AreEqual(original.GetHashCode(), parsed.GetHashCode());
+
+            var whitespaceParsed = PriceTypeRange.FromString("  cheap ~ expensive  ");
+            Assert.AreEqual(original, whitespaceParsed);
         }
 
         [TestMethod]
@@ -54,6 +59,7 @@ namespace MGAutoSell.Tests
         {
             Assert.ThrowsException<FormatException>(() => PriceTypeRange.FromString(null));
             Assert.ThrowsException<FormatException>(() => PriceTypeRange.FromString(""));
+            Assert.ThrowsException<FormatException>(() => PriceTypeRange.FromString("   "));
             Assert.ThrowsException<FormatException>(() => PriceTypeRange.FromString("Normal"));
             Assert.ThrowsException<FormatException>(() => PriceTypeRange.FromString("~Normal"));
             Assert.ThrowsException<FormatException>(() => PriceTypeRange.FromString("Normal~"));

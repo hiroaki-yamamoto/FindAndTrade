@@ -43,18 +43,22 @@ namespace MGAutoSell.Caravans
         /// <param name="trader">Optional colonist negotiator to verify trade eligibility with each settlement.</param>
         /// <param name="maxDistance">Optional callback returning the maximum allowed launch distance for a given <see cref="PlanetLayer"/>.</param>
         /// <param name="settlementPredicate">Optional exclusion predicate; settlements returning <c>true</c> are skipped.</param>
+        /// <param name="distanceCalculator">Optional delegate to calculate tile distance when not yet cached; defaults to <see cref="WorldGrid.ApproxDistanceInTiles"/>.</param>
         /// <returns>A dictionary mapping each eligible <see cref="Settlement"/> to its distance in tiles.</returns>
         public Dictionary<Settlement, float> GetDistances(
             Map map,
             Pawn trader = null,
             Func<PlanetLayer, float> maxDistance = null,
-            Predicate<Settlement> settlementPredicate = null)
+            Predicate<Settlement> settlementPredicate = null,
+            Func<Map, Settlement, float> distanceCalculator = null)
         {
             var distances = new Dictionary<Settlement, float>();
             if (map == null || Settlements == null || Settlements.Count == 0)
             {
                 return distances;
             }
+
+            distanceCalculator ??= static (m, s) => Find.WorldGrid.ApproxDistanceInTiles(m.Tile, s.Tile);
 
             foreach (var settlement in Settlements)
             {
@@ -75,13 +79,17 @@ namespace MGAutoSell.Caravans
 
                 if (!_distanceCache.TryGetValue((map, settlement), out float distance))
                 {
-                    distance = Find.WorldGrid.ApproxDistanceInTiles(map.Tile, settlement.Tile);
+                    distance = distanceCalculator(map, settlement);
                     _distanceCache[(map, settlement)] = distance;
                 }
 
-                if (maxDistance != null && distance > maxDistance(settlement.Tile.Layer))
+                if (maxDistance != null)
                 {
-                    continue;
+                    var layer = Find.World != null ? settlement.Tile.Layer : null;
+                    if (distance > maxDistance(layer))
+                    {
+                        continue;
+                    }
                 }
 
                 distances[settlement] = distance;
@@ -99,29 +107,43 @@ namespace MGAutoSell.Caravans
         /// Space Complexity: O(1) auxiliary memory.
         /// </remarks>
         /// <param name="map">The map to search for shuttles.</param>
+        /// <param name="fuelGetter">Optional delegate to retrieve a shuttle's fuel level; defaults to <see cref="Building_PassengerShuttle.FuelLevel"/>.</param>
+        /// <param name="mapGetter">Optional delegate to retrieve a shuttle's map; defaults to <see cref="Thing.Map"/>.</param>
+        /// <param name="isFullHealthEvaluator">Optional delegate to determine whether a shuttle is at full health; defaults to <c>HitPoints &gt;= BaseMaxHitPoints</c>.</param>
         /// <returns>The best <see cref="Building_PassengerShuttle"/> on <paramref name="map"/>, or <c>null</c> if none are found.</returns>
-        public Building_PassengerShuttle GetBestForMap(Map map)
+        public Building_PassengerShuttle GetBestForMap(
+            Map map,
+            Func<Building_PassengerShuttle, float> fuelGetter = null,
+            Func<Building_PassengerShuttle, Map> mapGetter = null,
+            Func<Building_PassengerShuttle, bool> isFullHealthEvaluator = null)
         {
             if (map == null || Shuttles == null || Shuttles.Count == 0)
             {
                 return null;
             }
 
+            fuelGetter ??= static s => s.FuelLevel;
+            mapGetter ??= static s => s.Map;
+            isFullHealthEvaluator ??= static s => s.HitPoints >= s.def.BaseMaxHitPoints;
+
             Building_PassengerShuttle best = null;
             bool bestIsFullHealth = false;
+            float bestFuel = 0f;
 
             foreach (var shuttle in Shuttles)
             {
-                if (shuttle == null || shuttle.Map != map)
+                if (shuttle == null || mapGetter(shuttle) != map)
                 {
                     continue;
                 }
 
-                bool isFullHealth = shuttle.HitPoints >= shuttle.def.BaseMaxHitPoints;
+                bool isFullHealth = isFullHealthEvaluator(shuttle);
+                float fuel = fuelGetter(shuttle);
                 if (best == null)
                 {
                     best = shuttle;
                     bestIsFullHealth = isFullHealth;
+                    bestFuel = fuel;
                     continue;
                 }
 
@@ -131,14 +153,16 @@ namespace MGAutoSell.Caravans
                     {
                         best = shuttle;
                         bestIsFullHealth = true;
+                        bestFuel = fuel;
                     }
 
                     continue;
                 }
 
-                if (shuttle.FuelLevel > best.FuelLevel)
+                if (fuel > bestFuel)
                 {
                     best = shuttle;
+                    bestFuel = fuel;
                 }
             }
 

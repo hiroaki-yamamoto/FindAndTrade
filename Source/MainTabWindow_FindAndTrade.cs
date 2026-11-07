@@ -34,12 +34,12 @@ namespace MGAutoSell
         private Vector2 listerScroll = Vector2.zero;
         private Vector2 settingScroll = Vector2.zero;
         private Vector2 sellScroll = Vector2.zero;
-        private string previousRenderTime;
 
         private readonly string title = $"<i>{"MGAutoSell.Title".Translate()}</i>";
         private readonly string tradeAutomaticallyLabel = "MGAutoSell.AutoSellToggle".Translate();
 
 #if DEBUG
+        private string previousRenderTime;
         private readonly List<long> ticks = [];
         private long nextPerformance = 0;
 #endif
@@ -491,9 +491,29 @@ namespace MGAutoSell
 
         private protected virtual void DoReorderSearch(int from, int to)
         {
-            var obj = comp.tradeRules[from];
-            comp.tradeRules.RemoveAt(from);
-            comp.tradeRules.Insert(from < to ? to - 1 : to, obj);
+            ReorderList(comp.tradeRules, from, to);
+        }
+
+        /// <summary>
+        /// Moves the element at index <paramref name="from"/> to the target position <paramref name="to"/>
+        /// following RimWorld's <see cref="ReorderableWidget"/> index convention.
+        /// </summary>
+        /// <typeparam name="T">The list element type.</typeparam>
+        /// <param name="list">The list to reorder in-place.</param>
+        /// <param name="from">The original zero-based index of the element.</param>
+        /// <param name="to">The target insertion index reported by <see cref="ReorderableWidget"/>.</param>
+        internal static void ReorderList<T>(IList<T> list, int from, int to)
+        {
+            if (list == null || from < 0 || from >= list.Count || from == to)
+            {
+                return;
+            }
+
+            var obj = list[from];
+            list.RemoveAt(from);
+            int targetIndex = from < to ? to - 1 : to;
+            targetIndex = Math.Clamp(targetIndex, 0, list.Count);
+            list.Insert(targetIndex, obj);
         }
 
         /// <summary>

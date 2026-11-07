@@ -59,15 +59,16 @@ namespace MGAutoSell
         /// Space Complexity: O(J) where J is the number of junk items.
         /// </remarks>
         /// <param name="allItems">The list of map items to partition in-place.</param>
+        /// <param name="designatedSet">Optional precomputed set of junk-designated items; if <c>null</c>, queries the map's designation manager.</param>
         /// <returns>A list of groupings of junk items keyed by <see cref="ThingDef"/>.</returns>
-        public static List<IGrouping<ThingDef, Thing>> GetJunk(this List<Thing> allItems)
+        public static List<IGrouping<ThingDef, Thing>> GetJunk(this List<Thing> allItems, HashSet<Thing> designatedSet = null)
         {
             if (allItems == null || allItems.Count == 0)
             {
                 return [];
             }
 
-            var junkItems = ExtractJunkItemsInPlace(allItems);
+            var junkItems = ExtractJunkItemsInPlace(allItems, designatedSet);
             return junkItems.Count == 0 ? [] : junkItems.GroupBy(static x => x.def).ToList();
         }
 
@@ -80,14 +81,18 @@ namespace MGAutoSell
         /// </remarks>
         /// <param name="allItems">The list of map items to compact in-place.</param>
         /// <param name="thingDictionary">The destination dictionary mapping each <see cref="ThingDef"/> to its sellable items.</param>
-        public static void ExtractJunkInto(this List<Thing> allItems, Dictionary<ThingDef, List<Thing>> thingDictionary)
+        /// <param name="designatedSet">Optional precomputed set of junk-designated items; if <c>null</c>, queries the map's designation manager.</param>
+        public static void ExtractJunkInto(
+            this List<Thing> allItems,
+            Dictionary<ThingDef, List<Thing>> thingDictionary,
+            HashSet<Thing> designatedSet = null)
         {
             if (allItems == null || allItems.Count == 0 || thingDictionary == null)
             {
                 return;
             }
 
-            var designatedSet = BuildJunkDesignationSet(allItems);
+            designatedSet ??= BuildJunkDesignationSet(allItems);
             int writeIndex = 0;
             for (int readIndex = 0; readIndex < allItems.Count; readIndex++)
             {
@@ -146,12 +151,16 @@ namespace MGAutoSell
         /// <param name="rules">The sequence of trade rules to evaluate in priority order.</param>
         /// <param name="thingDictionary">Dictionary accumulating sellable items grouped by <see cref="ThingDef"/>.</param>
         /// <param name="ruleDictionary">Dictionary accumulating all matched items per <see cref="TradeRule"/>.</param>
+        /// <param name="itemMatcher">Optional predicate to evaluate whether a <see cref="TradeRule"/> matches a <see cref="Thing"/>; defaults to <see cref="QuerySearch.AppliesTo(Thing, Map)"/>.</param>
+        /// <param name="isSellable">Optional predicate to evaluate whether a <see cref="ThingDef"/> is player-sellable; defaults to <see cref="TradeUtility.EverPlayerSellable"/>.</param>
         /// <returns>A dictionary mapping each claimed <see cref="ThingDef"/> to its export threshold.</returns>
         public static Dictionary<ThingDef, int> DoRules(
             this List<Thing> allItems,
             IEnumerable<TradeRule> rules,
             ref Dictionary<ThingDef, List<Thing>> thingDictionary,
-            ref Dictionary<TradeRule, List<Thing>> ruleDictionary)
+            ref Dictionary<TradeRule, List<Thing>> ruleDictionary,
+            Func<TradeRule, Thing, bool> itemMatcher = null,
+            Func<ThingDef, bool> isSellable = null)
         {
             var sellDictionary = new Dictionary<ThingDef, int>();
             if (allItems == null || allItems.Count == 0 || rules == null)
@@ -159,9 +168,18 @@ namespace MGAutoSell
                 return sellDictionary;
             }
 
+            thingDictionary ??= new Dictionary<ThingDef, List<Thing>>();
+            ruleDictionary ??= new Dictionary<TradeRule, List<Thing>>();
+            isSellable ??= TradeUtility.EverPlayerSellable;
+
             foreach (var rule in rules)
             {
-                if (rule is not { Enabled: true } || rule.search?.Children?.queries == null || rule.search.Children.queries.Count == 0)
+                if (rule is not { Enabled: true })
+                {
+                    continue;
+                }
+
+                if (itemMatcher == null && (rule.search?.Children?.queries == null || rule.search.Children.queries.Count == 0))
                 {
                     continue;
                 }
@@ -173,7 +191,8 @@ namespace MGAutoSell
                 for (int readIndex = 0; readIndex < allItems.Count; readIndex++)
                 {
                     var item = allItems[readIndex];
-                    if (!rule.search.AppliesTo(item))
+                    bool matches = itemMatcher != null ? itemMatcher(rule, item) : rule.search.AppliesTo(item);
+                    if (!matches)
                     {
                         if (allowSell)
                         {
@@ -191,7 +210,7 @@ namespace MGAutoSell
                         continue;
                     }
 
-                    if (!TradeUtility.EverPlayerSellable(item.def))
+                    if (!isSellable(item.def))
                     {
                         // Non-sellable items remain in allItems and are excluded from the rule's sell list.
                         matchedForRule.RemoveAt(matchedForRule.Count - 1);
@@ -236,25 +255,40 @@ namespace MGAutoSell
         /// <param name="sellDictionary">Mapping of <see cref="ThingDef"/> to export retention threshold.</param>
         /// <param name="socialPawn">The negotiator pawn used to compute trade price improvements, or <c>null</c>.</param>
         /// <param name="thingDictionary">Dictionary of items grouped by <see cref="ThingDef"/>.</param>
+        /// <param name="unitPriceEvaluator">Optional delegate to compute the sell unit price of a <see cref="Thing"/>; if <c>null</c>, uses <see cref="TradeUtility.GetPricePlayerSell"/>.</param>
+        /// <param name="moneyFormatter">Optional delegate to format currency amounts; if <c>null</c>, uses <see cref="GenText.ToStringMoney"/>.</param>
         /// <returns>A list of <see cref="SellRecord"/> sorted by descending total value.</returns>
         public static List<SellRecord> GetEntries(
             this Dictionary<ThingDef, int> sellDictionary,
             Pawn socialPawn,
-            ref Dictionary<ThingDef, List<Thing>> thingDictionary)
+            ref Dictionary<ThingDef, List<Thing>> thingDictionary,
+            Func<Thing, float> unitPriceEvaluator = null,
+            Func<float, string> moneyFormatter = null)
         {
             if (thingDictionary == null || thingDictionary.Count == 0)
             {
                 return [];
             }
 
-            float traderPriceType = PriceType.Normal.PriceMultiplier();
-            float playerNegotiator = socialPawn?.GetStatValue(StatDefOf.TradePriceImprovement) ?? 0.1f;
+            float traderPriceType = 1f;
+            float playerNegotiator = 0.1f;
             const float settlement = 0f;
-            float drugBonusRaw = socialPawn?.GetStatValue(StatDefOf.DrugSellPriceImprovement) ?? 0f;
-            bool ideologyActive = ModsConfig.IdeologyActive;
-            float animalProduceBonusRaw = ideologyActive && socialPawn != null
-                ? socialPawn.GetStatValue(StatDefOf.AnimalProductsSellImprovement)
-                : 0f;
+            float drugBonusRaw = 0f;
+            bool ideologyActive = false;
+            float animalProduceBonusRaw = 0f;
+
+            if (unitPriceEvaluator == null)
+            {
+                traderPriceType = PriceType.Normal.PriceMultiplier();
+                playerNegotiator = socialPawn?.GetStatValue(StatDefOf.TradePriceImprovement) ?? 0.1f;
+                drugBonusRaw = socialPawn?.GetStatValue(StatDefOf.DrugSellPriceImprovement) ?? 0f;
+                ideologyActive = ModsConfig.IdeologyActive;
+                animalProduceBonusRaw = ideologyActive && socialPawn != null
+                    ? socialPawn.GetStatValue(StatDefOf.AnimalProductsSellImprovement)
+                    : 0f;
+            }
+
+            moneyFormatter ??= static v => v.ToStringMoney();
 
             var sellEntries = new List<SellRecord>(thingDictionary.Count);
             var emptyKeys = new List<ThingDef>();
@@ -267,29 +301,43 @@ namespace MGAutoSell
                     continue;
                 }
 
-                float drugBonus = thingDef.IsNonMedicalDrug ? drugBonusRaw : 0f;
-                float animalProduceBonus = (thingDef.IsLeather || thingDef.IsMeat || thingDef.IsWool)
-                    ? animalProduceBonusRaw
-                    : 0f;
-                float humanPawn = ideologyActive && items[0] is Pawn pawn && pawn.RaceProps.Humanlike
-                    ? 0.6f
-                    : 1f;
-
                 float priceTotal = 0f;
                 int itemsTotal = 0;
-                for (int i = 0; i < items.Count; i++)
+
+                if (unitPriceEvaluator != null)
                 {
-                    var item = items[i];
-                    int stackCount = item.stackCount;
-                    priceTotal += TradeUtility.GetPricePlayerSell(
-                        item,
-                        traderPriceType,
-                        humanPawn,
-                        playerNegotiator,
-                        settlement,
-                        drugBonus,
-                        animalProduceBonus) * stackCount;
-                    itemsTotal += stackCount;
+                    for (int i = 0; i < items.Count; i++)
+                    {
+                        var item = items[i];
+                        int stackCount = item.stackCount;
+                        priceTotal += unitPriceEvaluator(item) * stackCount;
+                        itemsTotal += stackCount;
+                    }
+                }
+                else
+                {
+                    float drugBonus = thingDef.IsNonMedicalDrug ? drugBonusRaw : 0f;
+                    float animalProduceBonus = (thingDef.IsLeather || thingDef.IsMeat || thingDef.IsWool)
+                        ? animalProduceBonusRaw
+                        : 0f;
+                    float humanPawn = ideologyActive && items[0] is Pawn pawn && pawn.RaceProps.Humanlike
+                        ? 0.6f
+                        : 1f;
+
+                    for (int i = 0; i < items.Count; i++)
+                    {
+                        var item = items[i];
+                        int stackCount = item.stackCount;
+                        priceTotal += TradeUtility.GetPricePlayerSell(
+                            item,
+                            traderPriceType,
+                            humanPawn,
+                            playerNegotiator,
+                            settlement,
+                            drugBonus,
+                            animalProduceBonus) * stackCount;
+                        itemsTotal += stackCount;
+                    }
                 }
 
                 int sellDown = sellDictionary != null && sellDictionary.TryGetValue(thingDef, out int exportLimit)
@@ -307,8 +355,8 @@ namespace MGAutoSell
                     continue;
                 }
 
-                var total = new ItemAndLabel<float>(roundedTotal, roundedTotal.ToStringMoney());
-                var pricePerItem = new ItemAndLabel<float>(unitPrice, unitPrice.ToStringMoney());
+                var total = new ItemAndLabel<float>(roundedTotal, moneyFormatter(roundedTotal));
+                var pricePerItem = new ItemAndLabel<float>(unitPrice, moneyFormatter(unitPrice));
                 sellEntries.Add(new SellRecord(thingDef, sellableCount, total, pricePerItem));
             }
 
@@ -676,24 +724,7 @@ namespace MGAutoSell
                 RecordTime(ref timestamp, ref benchmarkSell);
             }
 
-            var traders = TabUtility.GetTraders(false);
-            if (comp.autoTrade && comp.autoTraderIDs.Count > 0)
-            {
-                var allowedTraders = new List<TraderRecord>(traders.Count);
-                for (int i = 0; i < traders.Count; i++)
-                {
-                    var candidate = traders[i];
-                    if (comp.autoTraderIDs.Contains(candidate.Pawn.thingIDNumber))
-                    {
-                        allowedTraders.Add(candidate);
-                    }
-                }
-
-                if (allowedTraders.Count > 0)
-                {
-                    traders = allowedTraders;
-                }
-            }
+            var traders = FilterAllowedTraders(TabUtility.GetTraders(false), comp.autoTrade, comp.autoTraderIDs);
 
             if (withBenchmark)
             {
@@ -718,13 +749,7 @@ namespace MGAutoSell
                 RecordTime(ref timestamp, ref benchmarkPossibleItems);
             }
 
-            float rawTotalSilver = 0f;
-            for (int i = 0; i < sellEntries.Count; i++)
-            {
-                rawTotalSilver += sellEntries[i].Total.Value;
-            }
-
-            float totalSilver = (float)Math.Round(rawTotalSilver, 0);
+            float totalSilver = CalculateTotalSilver(sellEntries);
 
             if (withBenchmark)
             {
@@ -797,7 +822,66 @@ namespace MGAutoSell
             startTime = benchmarkNewTime;
         }
 
-        private static Pawn SelectBestNegotiator(List<TraderRecord> traders)
+        /// <summary>
+        /// Filters the candidate <paramref name="traders"/> list to those whose pawn ID is contained in
+        /// <paramref name="autoTraderIDs"/> when <paramref name="autoTrade"/> is enabled, falling back to the
+        /// original list if no allowed traders are present.
+        /// </summary>
+        /// <remarks>
+        /// Time Complexity: O(T) where T is the number of traders. Space Complexity: O(T).
+        /// </remarks>
+        internal static List<TraderRecord> FilterAllowedTraders(
+            List<TraderRecord> traders,
+            bool autoTrade,
+            HashSet<int> autoTraderIDs)
+        {
+            if (traders == null || traders.Count == 0 || !autoTrade || autoTraderIDs == null || autoTraderIDs.Count == 0)
+            {
+                return traders ?? [];
+            }
+
+            var allowedTraders = new List<TraderRecord>(traders.Count);
+            for (int i = 0; i < traders.Count; i++)
+            {
+                var candidate = traders[i];
+                if (candidate?.Pawn != null && autoTraderIDs.Contains(candidate.Pawn.thingIDNumber))
+                {
+                    allowedTraders.Add(candidate);
+                }
+            }
+
+            return allowedTraders.Count > 0 ? allowedTraders : traders;
+        }
+
+        /// <summary>
+        /// Sums the total silver value across all <paramref name="sellEntries"/> and rounds to the nearest whole number.
+        /// </summary>
+        /// <remarks>
+        /// Time Complexity: O(S) where S is the number of sell entries. Space Complexity: O(1).
+        /// </remarks>
+        internal static float CalculateTotalSilver(IReadOnlyList<SellRecord> sellEntries)
+        {
+            if (sellEntries == null || sellEntries.Count == 0)
+            {
+                return 0f;
+            }
+
+            float rawTotalSilver = 0f;
+            for (int i = 0; i < sellEntries.Count; i++)
+            {
+                rawTotalSilver += sellEntries[i].Total.Value;
+            }
+
+            return (float)Math.Round(rawTotalSilver, 0);
+        }
+
+        /// <summary>
+        /// Selects the negotiator pawn with the highest <see cref="TraderRecord.Improvement"/> from <paramref name="traders"/>.
+        /// </summary>
+        /// <remarks>
+        /// Time Complexity: O(T) single pass where T is the number of candidate traders. Space Complexity: O(1).
+        /// </remarks>
+        internal static Pawn SelectBestNegotiator(IReadOnlyList<TraderRecord> traders)
         {
             if (traders == null || traders.Count == 0)
             {
@@ -816,9 +900,9 @@ namespace MGAutoSell
             return best.Pawn;
         }
 
-        private static List<Thing> ExtractJunkItemsInPlace(List<Thing> allItems)
+        private static List<Thing> ExtractJunkItemsInPlace(List<Thing> allItems, HashSet<Thing> designatedSet = null)
         {
-            var designatedSet = BuildJunkDesignationSet(allItems);
+            designatedSet ??= BuildJunkDesignationSet(allItems);
             var junk = new List<Thing>();
             int writeIndex = 0;
 

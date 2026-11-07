@@ -36,12 +36,14 @@ namespace MGAutoSell.Processing
         /// <param name="currencyGap">The positive currency deficit to resolve.</param>
         /// <param name="aggregator">The inventory aggregator to update.</param>
         /// <param name="setTradeCount">Callback that sets the <c>CountToTransfer</c> on a <see cref="Tradeable"/>.</param>
+        /// <param name="costEvaluator">Optional delegate to evaluate the total currency cost of a <see cref="Tradeable"/>; defaults to the maximum of source and destination currency costs.</param>
         /// <returns><c>true</c> if an order was trimmed or removed; <c>false</c> if no orders remain.</returns>
         bool NormalizeStep(
             List<SellItem> orders,
             Dictionary<Tradeable, TradeRule> pairings,
             int currencyGap,
             ITradeInventoryAggregator aggregator,
-            Action<Tradeable, int> setTradeCount);
+            Action<Tradeable, int> setTradeCount,
+            Func<Tradeable, float> costEvaluator = null);
     }
 }

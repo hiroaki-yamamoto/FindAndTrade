@@ -23,22 +23,43 @@ namespace MGAutoSell.Extensions
             var rect = new Rect(row.FinalX + 2f, row.FinalY, width, 24f);
 
             string str = Widgets.TextField(rect, buffer);
-            if (str == buffer)
+            TryUpdateIntFieldFromText(str, ref val, ref buffer);
+
+            return rect;
+        }
+
+        /// <summary>
+        /// Parses and clamps a numeric text field input string into <c>[0, 1,000,000,000]</c>, updating <paramref name="val"/>
+        /// and <paramref name="buffer"/> when the input changes.
+        /// </summary>
+        /// <remarks>
+        /// Time Complexity: O(L) where L is the length of <paramref name="input"/>. Space Complexity: O(1).
+        /// </remarks>
+        /// <param name="input">The new string returned by the text field control.</param>
+        /// <param name="val">Reference to the integer value being edited.</param>
+        /// <param name="buffer">Reference to the string edit buffer.</param>
+        /// <returns><c>true</c> if <paramref name="buffer"/> or <paramref name="val"/> was updated; otherwise, <c>false</c>.</returns>
+        internal static bool TryUpdateIntFieldFromText(string input, ref int val, ref string buffer)
+        {
+            if (input == null || input == buffer)
             {
-                return rect;
+                return false;
             }
 
-            if (int.TryParse(str, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed))
+            if (int.TryParse(input, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed))
             {
                 val = Mathf.Clamp(parsed, 0, (int)1E+09);
                 buffer = val.ToString(CultureInfo.InvariantCulture);
-            }
-            else if (str.Length == 0 || str == "-")
-            {
-                buffer = str;
+                return true;
             }
 
-            return rect;
+            if (input.Length == 0 || input == "-")
+            {
+                buffer = input;
+                return true;
+            }
+
+            return false;
         }
 
         /// <summary>

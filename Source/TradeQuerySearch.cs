@@ -24,9 +24,9 @@ namespace MGAutoSell
         /// <summary>
         /// Gets the cached array of <see cref="ITradeQuery"/> children configured in this search.
         /// </summary>
-        public ITradeQuery[] TradeQueries => _tradeQueries ??= children.queries
+        public ITradeQuery[] TradeQueries => _tradeQueries ??= children?.queries?
             .OfType<ITradeQuery>()
-            .ToArray();
+            .ToArray() ?? [];
 
         /// <summary>
         /// Initializes a new instance of the <see cref="TradeQuerySearch"/> class.
@@ -42,9 +42,9 @@ namespace MGAutoSell
         {
             base.Changed();
             AllItems = this.GetPossibleItems();
-            _tradeQueries = children.queries
+            _tradeQueries = children?.queries?
                 .OfType<ITradeQuery>()
-                .ToArray();
+                .ToArray() ?? [];
         }
 
         /// <summary>
@@ -54,14 +54,14 @@ namespace MGAutoSell
         /// <returns><c>true</c> if the trade context satisfies the configured queries; otherwise, <c>false</c>.</returns>
         public bool AppliesTo(TradeContext context)
         {
-            _tradeQueries ??= children.queries
+            _tradeQueries ??= children?.queries?
                 .OfType<ITradeQuery>()
-                .ToArray();
+                .ToArray() ?? [];
 
             return !MatchAllQueries
                 ? TradeQueries.AnyX(
                     x => (x as ThingQuery)?.Enabled is not false && x.AppliesDirectlyTo(context),
-                    Children.anyMin)
+                    Children?.anyMin ?? 1)
                 : TradeQueries.All(
                     x => x is ThingQuery { Enabled: false } || x.AppliesDirectlyTo(context));
         }

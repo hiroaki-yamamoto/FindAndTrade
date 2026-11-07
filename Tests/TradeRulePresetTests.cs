@@ -14,6 +14,8 @@ namespace MGAutoSell.Tests
     public class TradeRulePresetTests
     {
         private string _tempDir;
+        private Func<string> _prevClipboardGetter;
+        private Action<string> _prevClipboardSetter;
 
         [TestInitialize]
         public void SetUp()
@@ -21,12 +23,16 @@ namespace MGAutoSell.Tests
             _tempDir = Path.Combine(Path.GetTempPath(), "FindAndTradeTests_" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(_tempDir);
             TradeRulePresetStorage.CustomPresetDirectory = _tempDir;
+            _prevClipboardGetter = TradeRulePresetStorage.ClipboardGetter;
+            _prevClipboardSetter = TradeRulePresetStorage.ClipboardSetter;
         }
 
         [TestCleanup]
         public void TearDown()
         {
             TradeRulePresetStorage.CustomPresetDirectory = null;
+            TradeRulePresetStorage.ClipboardGetter = _prevClipboardGetter;
+            TradeRulePresetStorage.ClipboardSetter = _prevClipboardSetter;
             if (Directory.Exists(_tempDir))
             {
                 Directory.Delete(_tempDir, recursive: true);
@@ -55,10 +61,14 @@ namespace MGAutoSell.Tests
             // Mutating original does not affect preset
             originalRule.Import = 999;
             Assert.AreEqual(10, preset.rules[0].Import);
+
+            var defaultPreset = new TradeRulePreset();
+            Assert.AreEqual("", defaultPreset.name);
+            Assert.IsNotNull(defaultPreset.rules);
         }
 
         [TestMethod]
-        public void ApplyPresetToCollection_OverwriteAndAppendModes_WorkCorrectly()
+        public void ApplyPreset_And_ApplyPresetToCollection_OverwriteAndAppendModes_WorkCorrectly()
         {
             var existingRule = new TradeRule { Import = 5, Mode = TradeMode.Import };
             var targetList = new List<TradeRule> { existingRule };
@@ -77,6 +87,35 @@ namespace MGAutoSell.Tests
             Assert.AreEqual(2, targetList.Count);
             Assert.AreEqual(20, targetList[0].Export);
             Assert.AreEqual(30, targetList[1].Export);
+
+            // ApplyPreset on TradeRulesGameComp preserves autoTraderIDs and replaces rules
+            var comp = TestHelper.CreateGameComp();
+            comp.autoTraderIDs.Add(777);
+            TradeRulePresetStorage.ApplyPreset(comp, preset, overwrite: true);
+            Assert.AreEqual(2, comp.tradeRules.Count);
+            Assert.IsTrue(comp.autoTraderIDs.Contains(777));
+        }
+
+        [TestMethod]
+        public void SanitizePresetFileName_And_ValidationGuards_HandleInvalidInputs()
+        {
+            Assert.AreEqual(string.Empty, TradeRulePresetStorage.SanitizePresetFileName(null));
+            Assert.AreEqual(string.Empty, TradeRulePresetStorage.SanitizePresetFileName("   "));
+            Assert.AreEqual("MyPreset", TradeRulePresetStorage.SanitizePresetFileName("  MyPreset  "));
+
+            Assert.IsFalse(TradeRulePresetStorage.SavePreset("", [], out string emptyNameErr));
+            Assert.IsNotNull(emptyNameErr);
+
+            Assert.IsNull(TradeRulePresetStorage.LoadPreset(null, out string nullPathErr));
+            Assert.IsNotNull(nullPathErr);
+
+            Assert.IsNull(TradeRulePresetStorage.LoadPreset(Path.Combine(_tempDir, "Missing.xml"), out string missingFileErr));
+            Assert.IsNotNull(missingFileErr);
+
+            TradeRulePresetStorage.ClipboardGetter = static () => "";
+            Assert.IsFalse(TradeRulePresetStorage.CanPasteFromClipboard());
+            Assert.IsNull(TradeRulePresetStorage.PasteFromClipboard(out string clipboardErr));
+            Assert.IsNotNull(clipboardErr);
         }
 
         [TestMethod]
@@ -93,6 +132,7 @@ namespace MGAutoSell.Tests
 
             Assert.IsTrue(TradeRulePresetStorage.PresetExists("Alpha"));
             Assert.IsFalse(TradeRulePresetStorage.PresetExists("NonExistent"));
+            Assert.IsFalse(TradeRulePresetStorage.PresetExists("   "));
 
             var headers = TradeRulePresetStorage.GetPresetHeaders();
             Assert.AreEqual(2, headers.Count);

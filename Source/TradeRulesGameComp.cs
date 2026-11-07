@@ -267,18 +267,29 @@ namespace MGAutoSell
             return bestRoute;
         }
 
-        private static int GetTraderSilverCount(Settlement settlement)
+        internal static int GetTraderSilverCount(Settlement settlement, ThingDef silverDef = null)
         {
-            var stock = settlement?.trader?.StockListForReading;
-            if (stock == null)
+            return GetSilverCountFromStock(settlement?.trader?.StockListForReading, silverDef);
+        }
+
+        /// <summary>
+        /// Counts the stack count of the first silver stack in <paramref name="stock"/> in O(N) time.
+        /// </summary>
+        /// <param name="stock">The trader's stock list.</param>
+        /// <param name="silverDef">Optional override for <see cref="ThingDefOf.Silver"/> in unit tests.</param>
+        /// <returns>The quantity of silver held, or <c>0</c> if none is present.</returns>
+        internal static int GetSilverCountFromStock(IReadOnlyList<Thing> stock, ThingDef silverDef = null)
+        {
+            if (stock == null || stock.Count == 0)
             {
                 return 0;
             }
 
+            silverDef ??= ThingDefOf.Silver;
             for (int i = 0; i < stock.Count; i++)
             {
                 var thing = stock[i];
-                if (thing != null && thing.def == ThingDefOf.Silver)
+                if (thing != null && thing.def == silverDef)
                 {
                     return thing.stackCount;
                 }

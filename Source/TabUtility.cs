@@ -17,7 +17,8 @@ namespace MGAutoSell
     internal static class TabUtility
     {
         private static readonly Color _fadedColor = new(1f, 1f, 1f, 0.4f);
-        private static readonly string sellHeader = "MGAutoSell.SellHeader".Translate();
+        private static string _sellHeader;
+        private static string SellHeader => _sellHeader ??= "MGAutoSell.SellHeader".Translate();
 
         /// <summary>
         /// Renders the right-hand sell preview panel displaying queued sell items, potential buy items,
@@ -42,7 +43,7 @@ namespace MGAutoSell
             toSellRect.SplitHorizontally(Text.LineHeight, out var itemHeader, out toSellRect);
 
             Widgets.DrawLightHighlight(itemHeader);
-            Widgets.Label(itemHeader.RightPartPixels(itemHeader.width - Text.LineHeight - 10f), sellHeader);
+            Widgets.Label(itemHeader.RightPartPixels(itemHeader.width - Text.LineHeight - 10f), SellHeader);
             GUI.DrawTexture(itemHeader.RightPartPixels(24f), ThingDefOf.Silver.uiIcon);
 
             toSellRect.SplitHorizontally(4f, out var gapHeader, out toSellRect);
@@ -284,13 +285,22 @@ namespace MGAutoSell
                     isLeader));
             }
 
-            traders.Sort(static (a, b) =>
-            {
-                int leaderCompare = b.IsLeader.CompareTo(a.IsLeader);
-                return leaderCompare != 0 ? leaderCompare : b.Improvement.CompareTo(a.Improvement);
-            });
+            traders.Sort(CompareTraders);
 
             return traders;
+        }
+
+        /// <summary>
+        /// Compares two <see cref="TraderRecord"/> instances, ordering ideology leaders first and higher
+        /// <see cref="TraderRecord.Improvement"/> values second.
+        /// </summary>
+        /// <param name="a">The first trader record.</param>
+        /// <param name="b">The second trader record.</param>
+        /// <returns>A signed integer indicating the relative sort order of <paramref name="a"/> and <paramref name="b"/>.</returns>
+        internal static int CompareTraders(TraderRecord a, TraderRecord b)
+        {
+            int leaderCompare = b.IsLeader.CompareTo(a.IsLeader);
+            return leaderCompare != 0 ? leaderCompare : b.Improvement.CompareTo(a.Improvement);
         }
     }
 }

@@ -28,10 +28,35 @@ namespace MGAutoSell.Query
 
         /// <inheritdoc />
         public override IEnumerable<TraderKindDef> AllOptions() =>
-            allOptions ??= base.AllOptions()
-                .Where(static x => !string.IsNullOrWhiteSpace(x.label))
-                .GroupBy(static x => x.label)
-                .Select(static x => x.FirstOrDefault())
-                .ToList();
+            allOptions ??= FilterDistinctOptions(base.AllOptions());
+
+        /// <summary>
+        /// Filters out null or unlabeled <see cref="TraderKindDef"/> entries and deduplicates by <see cref="Def.label"/> in O(N) time.
+        /// </summary>
+        /// <remarks>
+        /// Time Complexity: O(N) single pass using a <see cref="HashSet{T}"/> of labels instead of LINQ <c>GroupBy</c>.
+        /// Space Complexity: O(U) where U is the number of unique labels.
+        /// </remarks>
+        /// <param name="options">The source sequence of <see cref="TraderKindDef"/> definitions.</param>
+        /// <returns>A deduplicated list of <see cref="TraderKindDef"/> definitions with non-empty labels.</returns>
+        internal static List<TraderKindDef> FilterDistinctOptions(IEnumerable<TraderKindDef> options)
+        {
+            if (options == null)
+            {
+                return [];
+            }
+
+            var seenLabels = new HashSet<string>();
+            var result = new List<TraderKindDef>();
+            foreach (var option in options)
+            {
+                if (option != null && !string.IsNullOrWhiteSpace(option.label) && seenLabels.Add(option.label))
+                {
+                    result.Add(option);
+                }
+            }
+
+            return result;
+        }
     }
 }

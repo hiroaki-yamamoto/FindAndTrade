@@ -4,7 +4,7 @@ using Microsoft.VisualStudio.TestTools.UnitTesting;
 namespace MGAutoSell.Tests
 {
     /// <summary>
-    /// Unit tests for <see cref="TradeRule"/> validating mode permissions, threshold validation, and cloning.
+    /// Unit tests for <see cref="TradeRule"/> validating mode permissions, threshold validation, hash stability, and deep cloning.
     /// </summary>
     [TestClass]
     public class TradeRuleTests
@@ -42,7 +42,7 @@ namespace MGAutoSell.Tests
         }
 
         [TestMethod]
-        public void MaintainMode_ValidRange_AllowsBothBuyAndSell()
+        public void MaintainMode_ValidRangeAndZeroThresholds_EvaluatesPermissionsCorrectly()
         {
             var rule = new TradeRule
             {
@@ -54,6 +54,17 @@ namespace MGAutoSell.Tests
             Assert.IsTrue(rule.AllowBuy);
             Assert.IsTrue(rule.AllowSell);
             Assert.IsFalse(rule.Invalid);
+
+            // When both Import and Export are 0 in Maintain mode, NoConfig is true -> AllowSell is true, AllowBuy is false
+            var zeroMaintain = new TradeRule
+            {
+                Mode = TradeMode.Maintain,
+                Import = 0,
+                Export = 0
+            };
+            Assert.IsTrue(zeroMaintain.NoConfig);
+            Assert.IsTrue(zeroMaintain.AllowSell);
+            Assert.IsFalse(zeroMaintain.AllowBuy);
         }
 
         [TestMethod]
@@ -85,16 +96,21 @@ namespace MGAutoSell.Tests
         }
 
         [TestMethod]
-        public void Clone_CopiesAllPropertiesAndInitializesBuffers()
+        public void Clone_CopiesAllPropertiesDeepCopiesSearchAllItemsAndCachesHash()
         {
+            var steelDef = TestHelper.CreateThingDef("Steel");
             var source = new TradeRule
             {
                 Import = 15,
                 Export = 60,
                 Enabled = false,
                 Aggregation = TradeRuleAggregation.Rule,
-                Mode = TradeMode.Maintain
+                Mode = TradeMode.Maintain,
+                search = TestHelper.CreateSearch("Metals", [steelDef])
             };
+
+            Assert.AreSame(source.search, source.Search);
+            Assert.AreEqual(source.Hash, source.Hash);
 
             var clone = source.Clone();
 
@@ -107,6 +123,11 @@ namespace MGAutoSell.Tests
             Assert.AreEqual(TradeMode.Maintain, clone.Mode);
             Assert.AreEqual("15", clone.ImportBuffer);
             Assert.AreEqual("60", clone.ExportBuffer);
+            Assert.IsNotNull(clone.search);
+            Assert.AreNotSame(source.search, clone.search);
+            Assert.AreEqual("Metals", clone.search.name);
+            Assert.AreEqual(1, clone.search.AllItems.Count);
+            Assert.AreNotSame(source.search.AllItems, clone.search.AllItems);
         }
     }
 }
