@@ -1,3 +1,9 @@
+---
+id: setting_save_spec
+title: Setting Save/Load Specification
+content: The specification for saving and loading settings in this mod.
+---
+
 # Import/Export Specifications
 
 - The import/export feature must be structured so that configurations can be
