@@ -2,11 +2,10 @@
 <Defs>
     <MainButtonDef>
         <defName>FindAndTrade</defName>
-        <label>find / trade</label>
+        <label>Find And Trade</label>
         <description>Find items, and automate trading.</description>
         <tabWindowClass>MGAutoSell.MainTabWindow_FindAndTrade</tabWindowClass>
         <validWithoutMap>true</validWithoutMap>
-        <minimized>True</minimized>
         <iconPath>TradeWindowIcon</iconPath>
         <order>250</order>
     </MainButtonDef>

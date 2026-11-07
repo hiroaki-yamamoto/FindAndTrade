@@ -4,46 +4,46 @@
     <MGAutoSell.AggByDef>按ThingDef统计</MGAutoSell.AggByDef>
     <!-- EN: Count by Rule -->
     <MGAutoSell.AggByRule>按规则统计</MGAutoSell.AggByRule>
-    
+
     <!-- EN: earned -->
     <MGAutoSell.Earned>盈利</MGAutoSell.Earned>
     <!-- EN: spent -->
     <MGAutoSell.Spent>支出</MGAutoSell.Spent>
-    
+
     <!-- EN: \n\nItems Bought: -->
     <MGAutoSell.Bought>\n\n已购入物品:</MGAutoSell.Bought>
     <!-- EN: \n\nItems Sold: -->
     <MGAutoSell.Sold>\n\n已售出物品:</MGAutoSell.Sold>
-    
+
     <!-- EN: Traded with {0} -->
     <MGAutoSell.LetterTitle>自行完成与 {0} 的交易</MGAutoSell.LetterTitle>
     <!-- Pawn, Trader Ship/Faction, Silver, earned/spent, Buy, Sell -->
     <!-- EN: {0} traded with {1}.\n{2} was {3}.{4}{5} -->
     <MGAutoSell.Letter>{0} 与 {1} 完成了交易。\n{3} {2}。{4}{5}</MGAutoSell.Letter>
-    
+
     <!-- EN: This rule is invalid because the minimum exceeds the maximum. -->
     <MGAutoSell.RuleInvalid>此规则无效，因最小值大于最大值。</MGAutoSell.RuleInvalid>
-    
+
     <!-- EN: Find / Trade -->
     <MGAutoSell.Title>Find / Trade</MGAutoSell.Title>
     <!-- EN: Trade Automatically -->
     <MGAutoSell.AutoSellToggle>自动交易</MGAutoSell.AutoSellToggle>
-    
+
     <!-- EN: Junk -->
     <MGAutoSell.JunkDesignator>售出(自动交易)</MGAutoSell.JunkDesignator>
-    
+
     <!-- EN: Trade Rule -->
     <MGAutoSell.NameForNew>交易规则</MGAutoSell.NameForNew>
     <!-- EN: Name for New Rule -->
     <MGAutoSell.NewTradeRule>新建规则名称</MGAutoSell.NewTradeRule>
-    
+
     <!-- EN: Export -->
     <MGAutoSell.Mode.Export>售出</MGAutoSell.Mode.Export>
     <!-- EN: Import -->
     <MGAutoSell.Mode.Import>购入</MGAutoSell.Mode.Import>
     <!-- EN: Maintain -->
     <MGAutoSell.Mode.Maintain>调剂</MGAutoSell.Mode.Maintain>
-    
+
     <!-- EN: Invalid Rule:\n\n{0} -->
     <MGAutoSell.Invalid>无效规则:\n\n{0}</MGAutoSell.Invalid>
     <!-- EN: This rule is invalid because you are trying to have at least {0}, and at most {1}.\nImport must be larger than Export. -->
@@ -52,49 +52,82 @@
     <MGAutoSell.InvalidBuy>此规则无效，原因：尝试购入/保留 {0} 个。</MGAutoSell.InvalidBuy>
     <!-- EN: This Maintain rule is basically an {0} rule, since your {1} amount is not greater than 0. -->
     <MGAutoSell.Basically>因设置 {1} 的数量不大于0，此调剂规则本质为 {0} ，请点击变更规则类型或重设 {1} 数量。</MGAutoSell.Basically>
-    
+
     <!-- EN: Items -->
     <MGAutoSell.SellHeader>物品列表</MGAutoSell.SellHeader>
-    
+
     <!-- EN: Automatically Trade -->
     <MGAutoSell.Caravan.AutomaticallyTradeLabel>自动交易</MGAutoSell.Caravan.AutomaticallyTradeLabel>
     <!-- EN: When enabled, caravans and shuttles will automatically be dispatched to this settlement to trade according to the rules. -->
     <MGAutoSell.Caravan.AutomaticallyTradeDescription>启用后，远征队(包括穿梭机)将依据设定的规则自动前往该基地进行交易。</MGAutoSell.Caravan.AutomaticallyTradeDescription>
-    
+
     <!-- EN: Benchmark -->
     <MGAutoSell.Settings.Benchmark>基准测试</MGAutoSell.Settings.Benchmark>
     <!-- EN: Load a save/map to enable benchmarking. -->
     <MGAutoSell.Settings.BenchmarkDisabled>载入存档/地图以启用测试。</MGAutoSell.Settings.BenchmarkDisabled>
     <!-- EN: Enable dev mode to benchmark. -->
     <MGAutoSell.Settings.BenchmarkDisabledNoDev>启用开发者模式以进行基准测试。</MGAutoSell.Settings.BenchmarkDisabledNoDev>
-    
+
     <!-- EN: Scan Every Stack -->
     <MGAutoSell.Settings.scanEveryStackLabel>扫描所有堆叠</MGAutoSell.Settings.scanEveryStackLabel>
     <!-- EN: Scan every stack of items on the map instead of just the first Thing per trade row. -->
     <MGAutoSell.Settings.scanEveryStackTooltip>扫描所有地图上的堆叠，而非匹配规则命中堆叠的第一个物品。(译者注：经向作者请教，启用该选项后，可以进行更精细的操作，如售出尚有几天就腐烂的食材，但该选项会增加性能消耗)</MGAutoSell.Settings.scanEveryStackTooltip>
-    
+
     <!-- EN: Mark trader when manually trading -->
     <MGAutoSell.Settings.rememberManualTradeLabel>手动交易后标记商队</MGAutoSell.Settings.rememberManualTradeLabel>
     <!-- EN: When manually trading, mark them so that they won't be automatically traded with again later. 同上-->
     <MGAutoSell.Settings.rememberManualTradeTooltip>于自动交易前手动交易后，标记已交易的队伍，以免后续再次自动交易。</MGAutoSell.Settings.rememberManualTradeTooltip>
-    
+
     <!-- EN: Show All Matching ThingDefs -->
     <MGAutoSell.Settings.showAllMatchingItemsLabel>展示所有匹配的ThingDef</MGAutoSell.Settings.showAllMatchingItemsLabel>
     <!-- EN: Display all items that match the trade rules, not just selling.\n\nA rule's list is regenerated when the rule changes. -->
     <MGAutoSell.Settings.showAllMatchingItemsTooltip>显示所有符合交易规则的物品，而非仅出售物品。\n\n物品列表会在规则变更后重新生成。</MGAutoSell.Settings.showAllMatchingItemsTooltip>
-    
+
     <!-- EN: Show Quantity Instead of Label -->
     <MGAutoSell.Settings.showQuantityInsteadOfLabelLabel>显示数量而非标签</MGAutoSell.Settings.showQuantityInsteadOfLabelLabel>
     <!-- EN: Display the quantity of items instead of their mode labels. -->
     <MGAutoSell.Settings.showQuantityInsteadOfLabelTooltip>显示物品数量而非模式标签</MGAutoSell.Settings.showQuantityInsteadOfLabelTooltip>
-    
+
     <!-- EN: Color Import/Export Boxes Based on Quantity -->
     <MGAutoSell.Settings.colorRuleCountsOnWorkLabel>基于其售出/购入数量高亮输入框</MGAutoSell.Settings.colorRuleCountsOnWorkLabel>
     <!-- EN: Color the Import/Export boxes based on whether the rule will do something on the next trade. -->
     <MGAutoSell.Settings.colorRuleCountsOnWorkTooltip>基于下次交易类型高亮对应规则的输入框。（译者注：蓝色为购入，绿色为售出，黄色为调剂，白色为无动作）</MGAutoSell.Settings.colorRuleCountsOnWorkTooltip>
-    
+
     <!-- EN: Show Min/Max Label Where Applicable -->
     <MGAutoSell.Settings.showMinMaxLabelWhereApplicableLabel>显示调剂的适用数量范围</MGAutoSell.Settings.showMinMaxLabelWhereApplicableLabel>
     <!-- EN: When showing quantity instead of label, show the min/max quantity as the label if the is aggregated by ThingDef, and Min is not equal to Max, and if there's space. -->
     <MGAutoSell.Settings.showMinMaxLabelWhereApplicableTooltip>启用“显示数量而非标签”后，若调剂(维持)规则是由多个不同的ThingDef合并而成，且最小/最大值不相同，交易模式标签空间又足够的情况下，标签处将显示其的适用数量范围。</MGAutoSell.Settings.showMinMaxLabelWhereApplicableTooltip>
+    <!-- Presets & Import/Export -->
+    <MGAutoSell.Presets>预设</MGAutoSell.Presets>
+    <MGAutoSell.PresetsTooltip>管理交易规则预设（导入、导出、删除）</MGAutoSell.PresetsTooltip>
+    <MGAutoSell.ImportPreset>导入预设</MGAutoSell.ImportPreset>
+    <MGAutoSell.ImportPresetTooltip>从预设或剪贴板导入交易规则</MGAutoSell.ImportPresetTooltip>
+    <MGAutoSell.ExportPreset>导出预设</MGAutoSell.ExportPreset>
+    <MGAutoSell.ExportPresetTooltip>将交易规则导出到预设或剪贴板</MGAutoSell.ExportPresetTooltip>
+    <MGAutoSell.SaveAsPreset>另存为预设...</MGAutoSell.SaveAsPreset>
+    <MGAutoSell.SaveCurrentAsPreset>保存当前规则</MGAutoSell.SaveCurrentAsPreset>
+    <MGAutoSell.ManagePresets>管理预设...</MGAutoSell.ManagePresets>
+    <MGAutoSell.ManagePresetsTitle>交易规则预设</MGAutoSell.ManagePresetsTitle>
+    <MGAutoSell.OpenFolder>打开文件夹</MGAutoSell.OpenFolder>
+    <MGAutoSell.ImportFromClipboard>从剪贴板导入</MGAutoSell.ImportFromClipboard>
+    <MGAutoSell.ExportToClipboard>复制到剪贴板</MGAutoSell.ExportToClipboard>
+    <MGAutoSell.ExportedToClipboard>交易规则已复制到剪贴板。</MGAutoSell.ExportedToClipboard>
+    <MGAutoSell.PresetName>预设名称</MGAutoSell.PresetName>
+    <MGAutoSell.PresetNameEmpty>预设名称不能为空。</MGAutoSell.PresetNameEmpty>
+    <MGAutoSell.PresetSaved>预设 '{0}' 保存成功。</MGAutoSell.PresetSaved>
+    <MGAutoSell.PresetSaveFailed>保存预设失败: {0}</MGAutoSell.PresetSaveFailed>
+    <MGAutoSell.PresetDeleted>预设 '{0}' 已删除。</MGAutoSell.PresetDeleted>
+    <MGAutoSell.PresetDeleteFailed>删除预设失败: {0}</MGAutoSell.PresetDeleteFailed>
+    <MGAutoSell.PresetLoaded>预设 '{0}' 已加载 ({1} 条规则)。</MGAutoSell.PresetLoaded>
+    <MGAutoSell.PresetLoadFailed>加载预设失败: {0}</MGAutoSell.PresetLoadFailed>
+    <MGAutoSell.PresetOverwriteConfirm>名为 '{0}' 的预设已存在。是否覆盖？</MGAutoSell.PresetOverwriteConfirm>
+    <MGAutoSell.PresetDeleteConfirm>确定要删除预设 '{0}' 吗？</MGAutoSell.PresetDeleteConfirm>
+    <MGAutoSell.PresetLoadOverwriteConfirm>是否用预设 '{0}' 替换当前的所有交易规则？</MGAutoSell.PresetLoadOverwriteConfirm>
+    <MGAutoSell.LoadOverwrite>替换</MGAutoSell.LoadOverwrite>
+    <MGAutoSell.LoadOverwriteTooltip>用此预设替换当前所有交易规则</MGAutoSell.LoadOverwriteTooltip>
+    <MGAutoSell.LoadAppend>追加</MGAutoSell.LoadAppend>
+    <MGAutoSell.LoadAppendTooltip>将此预设的规则追加到当前交易规则中</MGAutoSell.LoadAppendTooltip>
+    <MGAutoSell.DeletePresetTooltip>删除此预设</MGAutoSell.DeletePresetTooltip>
+    <MGAutoSell.NoPresetsFound>未找到任何预设。</MGAutoSell.NoPresetsFound>
+    <MGAutoSell.ClipboardEmptyOrInvalid>剪贴板中不包含有效的交易规则预设数据: {0}</MGAutoSell.ClipboardEmptyOrInvalid>
 </LanguageData>

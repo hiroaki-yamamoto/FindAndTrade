@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -6,6 +6,7 @@ using HarmonyLib;
 using LudeonTK;
 using MGAutoSell.Extensions;
 using MGAutoSell.Filter;
+using MGAutoSell.Presets;
 using MGAutoSell.Records;
 using RimWorld;
 using TD_Find_Lib;
@@ -109,19 +110,19 @@ namespace MGAutoSell
                     DrawEditTab(leftPanel);
                     break;
                 case WindowTab.Settings:
-                {
-                    leftPanel.SplitHorizontally(30, out var header, out var body);
-                    DrawTitle(header);
-                    DrawSettingsTab(body);
-                }
+                    {
+                        leftPanel.SplitHorizontally(30, out var header, out var body);
+                        DrawTitle(header);
+                        DrawSettingsTab(body);
+                    }
                     break;
                 case WindowTab.Rules:
                 default:
-                {
-                    leftPanel.SplitHorizontally(30, out var header, out var body);
-                    DrawTitle(header, true);
-                    DrawRulesTab(body);
-                }
+                    {
+                        leftPanel.SplitHorizontally(30, out var header, out var body);
+                        DrawTitle(header, true);
+                        DrawRulesTab(body);
+                    }
                     break;
             }
 
@@ -158,12 +159,26 @@ namespace MGAutoSell
             Widgets.DrawLineHorizontal(headerRect.x, headerRect.yMax - 2, headerRect.width);
             GUI.color = color;
 
-            if (showSettingsIcon && Widgets.ButtonImage(
-                    headerRect.TopPartPixels(Text.LineHeight).RightPartPixels(Text.LineHeight),
-                    Textures.OptionsGeneral, _fadedColor))
+            if (showSettingsIcon)
             {
-                tradersCache = GetTraders();
-                currentTab = WindowTab.Settings;
+                var iconSize = Text.LineHeight;
+                var settingsRect = headerRect.TopPartPixels(iconSize).RightPartPixels(iconSize);
+                var presetsRect = headerRect.TopPartPixels(iconSize).RightPartPixels(iconSize * 2 + 4f).LeftPartPixels(iconSize);
+
+                if (Widgets.ButtonImage(presetsRect, FindTex.Book, _fadedColor))
+                {
+                    Find.WindowStack.Add(new Dialog_ManagePresets(comp, () =>
+                    {
+                        sellCache = comp.Fetch(Find.CurrentMap, true);
+                    }));
+                }
+                TooltipHandler.TipRegion(presetsRect, "MGAutoSell.PresetsTooltip".Translate());
+
+                if (Widgets.ButtonImage(settingsRect, Textures.OptionsGeneral, _fadedColor))
+                {
+                    tradersCache = GetTraders();
+                    currentTab = WindowTab.Settings;
+                }
             }
         }
 
@@ -172,7 +187,7 @@ namespace MGAutoSell
             panel.SplitHorizontally(panel.height - 30f, out var top, out var bottom);
             var buttonRect = bottom.LeftPartPixels(30f);
             editor!.DoWindowContents(top);
-            if (!Widgets.ButtonImage(buttonRect, TexButton.Banish)) 
+            if (!Widgets.ButtonImage(buttonRect, TexButton.Banish))
                 return;
 
             currentTab = WindowTab.Rules;
@@ -194,7 +209,7 @@ namespace MGAutoSell
 
             body.SplitHorizontally(Text.LineHeight, out var autoSellRect, out body);
             body.SplitHorizontally(4f, out var gap, out var drawer);
-            
+
             Widgets.CheckboxLabeled(autoSellRect, tradeAutomaticallyLabel, ref comp.autoTrade);
 
             var color = GUI.color;
@@ -241,7 +256,7 @@ namespace MGAutoSell
                 if (trader.IsLeader)
                 {
                     var role = trader.Pawn.Ideo.GetRole(trader.Pawn);
-                    if(role != null)
+                    if (role != null)
                     {
                         GUI.color = trader.Pawn.ideo.Ideo.Color;
                         rect.SplitVertically(rect.width - spacePerRow, out rect, out var leaderIconRect);
@@ -251,11 +266,11 @@ namespace MGAutoSell
                     }
                 }
 
-                
+
             }
 
             var height = 0f;
-            if(shouldScroll)
+            if (shouldScroll)
                 listing.EndScrollView(ref height);
             else
                 listing.End();
@@ -264,7 +279,8 @@ namespace MGAutoSell
         private void DrawRulesTab(Rect panel)
         {
             var height = 300f;
-            var body = panel.TopPartPixels(panel.height - 30);
+            panel.SplitHorizontally(panel.height - 30f, out var body, out var bottom);
+            var buttonRect = bottom.LeftPartPixels(30f);
 
             var drawerListing = new Listing_StandardIndent();
             drawerListing.BeginScrollView(body, ref listerScroll,
@@ -316,18 +332,18 @@ namespace MGAutoSell
 
             drawerListing.EndScrollView(ref height);
 
-            var controlsRect = panel.BottomPartPixels(Text.LineHeight);
-            if (Widgets.ButtonImage(controlsRect.LeftPartPixels(Text.LineHeight), FindTex.GreyPlus))
+            if (Widgets.ButtonImage(buttonRect, FindTex.GreyPlus))
                 CreateRule();
+            TooltipHandler.TipRegion(buttonRect, "MGAutoSell.NewTradeRule".Translate());
 #if DEBUG
             var color = GUI.color;
             GUI.color = _fadedColor;
-            var controls = new WidgetRow(controlsRect.xMax, controlsRect.yMax - Text.LineHeight, UIDirection.LeftThenDown);
+            var controls = new WidgetRow(bottom.xMax, bottom.yMax - Text.LineHeight, UIDirection.LeftThenDown);
             controls.Label($"<i> Render: {previousRenderTime}</i>");
             GUI.color = color;
 #endif
         }
-        
+
         private void DrawSellPanel(Rect toSellRect)
         {
             toSellRect.SplitHorizontally(Text.LineHeight, out var itemHeader, out toSellRect);
@@ -347,10 +363,10 @@ namespace MGAutoSell
             var shouldScroll = totalHeight > viewRect.height;
             var row = new Rect(0, 0, 0, 0);
             var listing = new Listing_StandardIndent();
-            if(shouldScroll)
+            if (shouldScroll)
             {
                 viewRect.width += 16;
-                listing.BeginScrollView(viewRect, ref sellScroll, viewRect.LeftPartPixels(viewRect.width - 16).TopPartPixels(totalHeight).AtZero() );
+                listing.BeginScrollView(viewRect, ref sellScroll, viewRect.LeftPartPixels(viewRect.width - 16).TopPartPixels(totalHeight).AtZero());
             }
 
             var minRenderIndex = shouldScroll ? Math.Floor(sellScroll.y / Text.LineHeight) : 0;
@@ -360,7 +376,7 @@ namespace MGAutoSell
                 i++;
                 if (shouldScroll)
                 {
-                    if(i < minRenderIndex || i > maxRenderIndex)
+                    if (i < minRenderIndex || i > maxRenderIndex)
                     {
                         listing.Gap(Text.LineHeight);
                         continue;
@@ -491,7 +507,7 @@ namespace MGAutoSell
             if (!shouldUpdate)
                 return;
 
-            comp.SellCache[Find.CurrentMap] = CacheUtility.Cache(comp, Find.CurrentMap, out _, SellerOverride );
+            comp.SellCache[Find.CurrentMap] = CacheUtility.Cache(comp, Find.CurrentMap, out _, SellerOverride);
             nextQuickCache = DateTime.UtcNow.AddSeconds(1).Ticks;
         }
 
@@ -594,7 +610,7 @@ namespace MGAutoSell
                         break;
                 }
                 // Make sure we actually have a map and the UI is initialized.
-                
+
 
                 //CloseDevConsole();
 

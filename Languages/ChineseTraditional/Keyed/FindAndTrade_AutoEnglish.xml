@@ -63,4 +63,37 @@
 
 	<MGAutoSell.Settings.showMinMaxLabelWhereApplicableLabel>適用時顯示最小／最大值</MGAutoSell.Settings.showMinMaxLabelWhereApplicableLabel>
 	<MGAutoSell.Settings.showMinMaxLabelWhereApplicableTooltip>顯示數量而非標籤時，若規則依ThingDef計數、最小值不等於最大值，且空間足夠，就以最小／最大數量作為標籤。</MGAutoSell.Settings.showMinMaxLabelWhereApplicableTooltip>
+    <!-- Presets & Import/Export -->
+    <MGAutoSell.Presets>預設</MGAutoSell.Presets>
+    <MGAutoSell.PresetsTooltip>管理交易規則預設（匯入、匯出、刪除）</MGAutoSell.PresetsTooltip>
+    <MGAutoSell.ImportPreset>匯入預設</MGAutoSell.ImportPreset>
+    <MGAutoSell.ImportPresetTooltip>從預設或剪貼簿匯入交易規則</MGAutoSell.ImportPresetTooltip>
+    <MGAutoSell.ExportPreset>匯出預設</MGAutoSell.ExportPreset>
+    <MGAutoSell.ExportPresetTooltip>將交易規則匯出至預設或剪貼簿</MGAutoSell.ExportPresetTooltip>
+    <MGAutoSell.SaveAsPreset>另存為預設...</MGAutoSell.SaveAsPreset>
+    <MGAutoSell.SaveCurrentAsPreset>儲存當前規則</MGAutoSell.SaveCurrentAsPreset>
+    <MGAutoSell.ManagePresets>管理預設...</MGAutoSell.ManagePresets>
+    <MGAutoSell.ManagePresetsTitle>交易規則預設</MGAutoSell.ManagePresetsTitle>
+    <MGAutoSell.OpenFolder>開啟資料夾</MGAutoSell.OpenFolder>
+    <MGAutoSell.ImportFromClipboard>從剪貼簿匯入</MGAutoSell.ImportFromClipboard>
+    <MGAutoSell.ExportToClipboard>複製至剪貼簿</MGAutoSell.ExportToClipboard>
+    <MGAutoSell.ExportedToClipboard>交易規則已複製至剪貼簿。</MGAutoSell.ExportedToClipboard>
+    <MGAutoSell.PresetName>預設名稱</MGAutoSell.PresetName>
+    <MGAutoSell.PresetNameEmpty>預設名稱不能為空。</MGAutoSell.PresetNameEmpty>
+    <MGAutoSell.PresetSaved>預設 '{0}' 儲存成功。</MGAutoSell.PresetSaved>
+    <MGAutoSell.PresetSaveFailed>儲存預設失敗: {0}</MGAutoSell.PresetSaveFailed>
+    <MGAutoSell.PresetDeleted>預設 '{0}' 已刪除。</MGAutoSell.PresetDeleted>
+    <MGAutoSell.PresetDeleteFailed>刪除預設失敗: {0}</MGAutoSell.PresetDeleteFailed>
+    <MGAutoSell.PresetLoaded>預設 '{0}' 已載入 ({1} 條規則)。</MGAutoSell.PresetLoaded>
+    <MGAutoSell.PresetLoadFailed>載入預設失敗: {0}</MGAutoSell.PresetLoadFailed>
+    <MGAutoSell.PresetOverwriteConfirm>名為 '{0}' 的預設已存在。是否覆蓋？</MGAutoSell.PresetOverwriteConfirm>
+    <MGAutoSell.PresetDeleteConfirm>確定要刪除預設 '{0}' 嗎？</MGAutoSell.PresetDeleteConfirm>
+    <MGAutoSell.PresetLoadOverwriteConfirm>是否用預設 '{0}' 替換當前的所有交易規則？</MGAutoSell.PresetLoadOverwriteConfirm>
+    <MGAutoSell.LoadOverwrite>替換</MGAutoSell.LoadOverwrite>
+    <MGAutoSell.LoadOverwriteTooltip>用此預設替換當前所有交易規則</MGAutoSell.LoadOverwriteTooltip>
+    <MGAutoSell.LoadAppend>追加</MGAutoSell.LoadAppend>
+    <MGAutoSell.LoadAppendTooltip>將此預設的規則追加至當前交易規則中</MGAutoSell.LoadAppendTooltip>
+    <MGAutoSell.DeletePresetTooltip>刪除此預設</MGAutoSell.DeletePresetTooltip>
+    <MGAutoSell.NoPresetsFound>未找到任何預設。</MGAutoSell.NoPresetsFound>
+    <MGAutoSell.ClipboardEmptyOrInvalid>剪貼簿中不包含有效的交易規則預設資料: {0}</MGAutoSell.ClipboardEmptyOrInvalid>
 </LanguageData>

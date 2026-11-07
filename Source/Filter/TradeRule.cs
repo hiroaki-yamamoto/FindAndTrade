@@ -1,4 +1,4 @@
-﻿using TD_Find_Lib;
+using TD_Find_Lib;
 using Verse;
 
 namespace MGAutoSell.Filter
@@ -53,6 +53,38 @@ namespace MGAutoSell.Filter
             };
             ExportBuffer = Export.ToString();
             ImportBuffer = Import.ToString();
+        }
+
+        public TradeRule Clone()
+        {
+            try
+            {
+                var xml = ScribeXmlFromString.SaveAsString(this);
+                var copy = ScribeXmlFromString.LoadFromString<TradeRule>(xml);
+                if (copy != null)
+                {
+                    copy.search?.Changed();
+                    copy.ExportBuffer = copy.Export.ToString();
+                    copy.ImportBuffer = copy.Import.ToString();
+                    return copy;
+                }
+            }
+            catch (System.Exception ex)
+            {
+                Verse.Log.Warning($"[FindAndTrade] TradeRule.Clone via XML failed: {ex}");
+            }
+
+            var fallback = new TradeRule(this.search?.name ?? "")
+            {
+                Import = this.Import,
+                Export = this.Export,
+                Enabled = this.Enabled,
+                Aggregation = this.Aggregation,
+                Mode = this.Mode,
+                ExportBuffer = this.Export.ToString(),
+                ImportBuffer = this.Import.ToString()
+            };
+            return fallback;
         }
 
         public TradeRule()

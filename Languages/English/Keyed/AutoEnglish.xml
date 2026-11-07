@@ -62,4 +62,38 @@
 
     <MGAutoSell.Settings.showMinMaxLabelWhereApplicableLabel>Show Min/Max Label Where Applicable</MGAutoSell.Settings.showMinMaxLabelWhereApplicableLabel>
     <MGAutoSell.Settings.showMinMaxLabelWhereApplicableTooltip>When showing quantity instead of a label, show the min/max quantity as the label if the rule is aggregated by ThingDef, Min is not equal to Max, and there is enough space.</MGAutoSell.Settings.showMinMaxLabelWhereApplicableTooltip>
+
+    <!-- Presets & Import/Export -->
+    <MGAutoSell.Presets>Presets</MGAutoSell.Presets>
+    <MGAutoSell.PresetsTooltip>Manage trade rule presets (import, export, delete)</MGAutoSell.PresetsTooltip>
+    <MGAutoSell.ImportPreset>Import Preset</MGAutoSell.ImportPreset>
+    <MGAutoSell.ImportPresetTooltip>Import trade rules from a preset or clipboard</MGAutoSell.ImportPresetTooltip>
+    <MGAutoSell.ExportPreset>Export Preset</MGAutoSell.ExportPreset>
+    <MGAutoSell.ExportPresetTooltip>Export trade rules to a preset or clipboard</MGAutoSell.ExportPresetTooltip>
+    <MGAutoSell.SaveAsPreset>Save as Preset...</MGAutoSell.SaveAsPreset>
+    <MGAutoSell.SaveCurrentAsPreset>Save Current Rules</MGAutoSell.SaveCurrentAsPreset>
+    <MGAutoSell.ManagePresets>Manage Presets...</MGAutoSell.ManagePresets>
+    <MGAutoSell.ManagePresetsTitle>Trade Rule Presets</MGAutoSell.ManagePresetsTitle>
+    <MGAutoSell.OpenFolder>Open Folder</MGAutoSell.OpenFolder>
+    <MGAutoSell.ImportFromClipboard>Import from Clipboard</MGAutoSell.ImportFromClipboard>
+    <MGAutoSell.ExportToClipboard>Copy to Clipboard</MGAutoSell.ExportToClipboard>
+    <MGAutoSell.ExportedToClipboard>Trade rules copied to clipboard.</MGAutoSell.ExportedToClipboard>
+    <MGAutoSell.PresetName>Preset Name</MGAutoSell.PresetName>
+    <MGAutoSell.PresetNameEmpty>Preset name cannot be empty.</MGAutoSell.PresetNameEmpty>
+    <MGAutoSell.PresetSaved>Preset '{0}' saved successfully.</MGAutoSell.PresetSaved>
+    <MGAutoSell.PresetSaveFailed>Failed to save preset: {0}</MGAutoSell.PresetSaveFailed>
+    <MGAutoSell.PresetDeleted>Preset '{0}' deleted.</MGAutoSell.PresetDeleted>
+    <MGAutoSell.PresetDeleteFailed>Failed to delete preset: {0}</MGAutoSell.PresetDeleteFailed>
+    <MGAutoSell.PresetLoaded>Preset '{0}' loaded ({1} rules).</MGAutoSell.PresetLoaded>
+    <MGAutoSell.PresetLoadFailed>Failed to load preset: {0}</MGAutoSell.PresetLoadFailed>
+    <MGAutoSell.PresetOverwriteConfirm>A preset named '{0}' already exists. Overwrite it?</MGAutoSell.PresetOverwriteConfirm>
+    <MGAutoSell.PresetDeleteConfirm>Are you sure you want to delete preset '{0}'?</MGAutoSell.PresetDeleteConfirm>
+    <MGAutoSell.PresetLoadOverwriteConfirm>Replace all current trade rules with preset '{0}'?</MGAutoSell.PresetLoadOverwriteConfirm>
+    <MGAutoSell.LoadOverwrite>Replace</MGAutoSell.LoadOverwrite>
+    <MGAutoSell.LoadOverwriteTooltip>Replace all current trade rules with this preset</MGAutoSell.LoadOverwriteTooltip>
+    <MGAutoSell.LoadAppend>Append</MGAutoSell.LoadAppend>
+    <MGAutoSell.LoadAppendTooltip>Add this preset's rules to current trade rules</MGAutoSell.LoadAppendTooltip>
+    <MGAutoSell.DeletePresetTooltip>Delete this preset</MGAutoSell.DeletePresetTooltip>
+    <MGAutoSell.NoPresetsFound>No presets found.</MGAutoSell.NoPresetsFound>
+    <MGAutoSell.ClipboardEmptyOrInvalid>Clipboard does not contain valid trade rule preset data: {0}</MGAutoSell.ClipboardEmptyOrInvalid>
 </LanguageData>

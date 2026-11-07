@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LanguageData>
+    <MGAutoSell.AggByDef>ThingDef毎に集計</MGAutoSell.AggByDef>
+    <MGAutoSell.AggByRule>ルール毎に集計</MGAutoSell.AggByRule>
+
+    <MGAutoSell.Earned>獲得</MGAutoSell.Earned>
+    <MGAutoSell.Spent>消費</MGAutoSell.Spent>
+
+    <MGAutoSell.Bought>\n\n購入したアイテム:</MGAutoSell.Bought>
+    <MGAutoSell.Sold>\n\n売却したアイテム:</MGAutoSell.Sold>
+
+    <MGAutoSell.LetterTitle>{0}と取引しました</MGAutoSell.LetterTitle>
+    <MGAutoSell.Letter>{0}が{1}と取引しました。\n{2}シルバーを{3}しました。{4}{5}</MGAutoSell.Letter>
+
+    <MGAutoSell.RuleInvalid>最小値が最大値を超えているため、このルールは無効です。</MGAutoSell.RuleInvalid>
+
+    <MGAutoSell.Title>Find / Trade</MGAutoSell.Title>
+    <MGAutoSell.AutoSellToggle>自動取引を行う</MGAutoSell.AutoSellToggle>
+
+    <MGAutoSell.JunkDesignator>廃棄</MGAutoSell.JunkDesignator>
+
+    <MGAutoSell.NameForNew>取引ルール</MGAutoSell.NameForNew>
+    <MGAutoSell.NewTradeRule>新しいルールの名称</MGAutoSell.NewTradeRule>
+
+    <MGAutoSell.Mode.Export>売却</MGAutoSell.Mode.Export>
+    <MGAutoSell.Mode.Import>購入</MGAutoSell.Mode.Import>
+    <MGAutoSell.Mode.Maintain>維持</MGAutoSell.Mode.Maintain>
+
+    <MGAutoSell.Tooltips.Mode.Export>商人に余剰シルバーがある場合、上限数までアイテムを売却します</MGAutoSell.Tooltips.Mode.Export>
+    <MGAutoSell.Tooltips.Mode.Import>余剰シルバーがある場合、下限数までアイテムを購入します</MGAutoSell.Tooltips.Mode.Import>
+    <MGAutoSell.Tooltips.Mode.Maintain>余剰シルバーがある場合、設定範囲内に収まるよう購入・売却します</MGAutoSell.Tooltips.Mode.Maintain>
+    <MGAutoSell.Tooltips.Mode.MultipleItems>複数のアイテムが売却対象です\n{0}</MGAutoSell.Tooltips.Mode.MultipleItems>
+
+    <MGAutoSell.Invalid>無効なルール:\n\n{0}</MGAutoSell.Invalid>
+    <MGAutoSell.InvalidRange>最低{0}個、最大{1}個に設定しようとしていますが、購入下限は売却上限より大きくなければなりません。</MGAutoSell.InvalidRange>
+    <MGAutoSell.InvalidBuy>{0}個購入しようとしているため、このルールは無効です。</MGAutoSell.InvalidBuy>
+    <MGAutoSell.Basically>数量が0以下に指定されているため、この維持ルールは実質的に{0}ルールです。</MGAutoSell.Basically>
+
+    <MGAutoSell.SellHeader>アイテム一覧</MGAutoSell.SellHeader>
+
+    <MGAutoSell.Caravan.AutomaticallyTradeLabel>自動取引</MGAutoSell.Caravan.AutomaticallyTradeLabel>
+    <MGAutoSell.Caravan.AutomaticallyTradeDescription>有効にすると、キャラバンやシャトルがこの拠点に自動派遣され、ルールに従って取引します。</MGAutoSell.Caravan.AutomaticallyTradeDescription>
+
+    <MGAutoSell.Settings.Benchmark>ベンチマーク</MGAutoSell.Settings.Benchmark>
+    <MGAutoSell.Settings.BenchmarkDisabled>セーブまたはマップをロードするとベンチマークを実行できます。</MGAutoSell.Settings.BenchmarkDisabled>
+    <MGAutoSell.Settings.BenchmarkDisabledNoDev>開発者モードを有効にするとベンチマークを実行できます。</MGAutoSell.Settings.BenchmarkDisabledNoDev>
+
+    <MGAutoSell.Settings.scanEveryStackLabel>全スタックをスキャン</MGAutoSell.Settings.scanEveryStackLabel>
+    <MGAutoSell.Settings.scanEveryStackTooltip>取引行ごとの最初のアイテムだけでなく、マップ上のすべてのアイテムスタックをスキャンします。</MGAutoSell.Settings.scanEveryStackTooltip>
+
+    <MGAutoSell.Settings.rememberManualTradeLabel>手動取引した商人を記憶</MGAutoSell.Settings.rememberManualTradeLabel>
+    <MGAutoSell.Settings.rememberManualTradeTooltip>手動で取引した商人を記憶し、後で自動取引の対象にならないようにします。</MGAutoSell.Settings.rememberManualTradeTooltip>
+
+    <MGAutoSell.Settings.showAllMatchingItemsLabel>一致する全ThingDefを表示</MGAutoSell.Settings.showAllMatchingItemsLabel>
+    <MGAutoSell.Settings.showAllMatchingItemsTooltip>売却対象だけでなく、取引ルールに一致するすべてのアイテムを表示します。\n\nルール変更時に再生成されます。</MGAutoSell.Settings.showAllMatchingItemsTooltip>
+
+    <MGAutoSell.Settings.showQuantityInsteadOfLabelLabel>ラベルの代わりに数量を表示</MGAutoSell.Settings.showQuantityInsteadOfLabelLabel>
+    <MGAutoSell.Settings.showQuantityInsteadOfLabelTooltip>モードラベルの代わりにアイテムの数量を表示します。</MGAutoSell.Settings.showQuantityInsteadOfLabelTooltip>
+
+    <MGAutoSell.Settings.colorRuleCountsOnWorkLabel>数量に応じて枠を着色</MGAutoSell.Settings.colorRuleCountsOnWorkLabel>
+    <MGAutoSell.Settings.colorRuleCountsOnWorkTooltip>次の取引でルールが実行されるかどうかに基づいて枠を着色します。</MGAutoSell.Settings.colorRuleCountsOnWorkTooltip>
+
+    <MGAutoSell.Settings.showMinMaxLabelWhereApplicableLabel>適用可能な場合に最小/最大ラベルを表示</MGAutoSell.Settings.showMinMaxLabelWhereApplicableLabel>
+    <MGAutoSell.Settings.showMinMaxLabelWhereApplicableTooltip>ラベルの代わりに数量を表示する際、ThingDefで集約されており最小値と最大値が異なり、十分なスペースがある場合に表示します。</MGAutoSell.Settings.showMinMaxLabelWhereApplicableTooltip>
+
+    <!-- Presets & Import/Export -->
+    <MGAutoSell.Presets>プリセット</MGAutoSell.Presets>
+    <MGAutoSell.PresetsTooltip>取引ルールのプリセット管理（インポート、エクスポート、削除）</MGAutoSell.PresetsTooltip>
+    <MGAutoSell.ImportPreset>インポート</MGAutoSell.ImportPreset>
+    <MGAutoSell.ImportPresetTooltip>プリセットまたはクリップボードから取引ルールをインポート</MGAutoSell.ImportPresetTooltip>
+    <MGAutoSell.ExportPreset>エクスポート</MGAutoSell.ExportPreset>
+    <MGAutoSell.ExportPresetTooltip>取引ルールをプリセットまたはクリップボードへエクスポート</MGAutoSell.ExportPresetTooltip>
+    <MGAutoSell.SaveAsPreset>プリセットとして保存...</MGAutoSell.SaveAsPreset>
+    <MGAutoSell.SaveCurrentAsPreset>現在のルールを保存</MGAutoSell.SaveCurrentAsPreset>
+    <MGAutoSell.ManagePresets>プリセット管理...</MGAutoSell.ManagePresets>
+    <MGAutoSell.ManagePresetsTitle>取引ルール プリセット</MGAutoSell.ManagePresetsTitle>
+    <MGAutoSell.OpenFolder>フォルダを開く</MGAutoSell.OpenFolder>
+    <MGAutoSell.ImportFromClipboard>クリップボードからインポート</MGAutoSell.ImportFromClipboard>
+    <MGAutoSell.ExportToClipboard>クリップボードへコピー</MGAutoSell.ExportToClipboard>
+    <MGAutoSell.ExportedToClipboard>取引ルールをクリップボードにコピーしました。</MGAutoSell.ExportedToClipboard>
+    <MGAutoSell.PresetName>プリセット名</MGAutoSell.PresetName>
+    <MGAutoSell.PresetNameEmpty>プリセット名を入力してください。</MGAutoSell.PresetNameEmpty>
+    <MGAutoSell.PresetSaved>プリセット「{0}」を保存しました。</MGAutoSell.PresetSaved>
+    <MGAutoSell.PresetSaveFailed>プリセットの保存に失敗しました: {0}</MGAutoSell.PresetSaveFailed>
+    <MGAutoSell.PresetDeleted>プリセット「{0}」を削除しました。</MGAutoSell.PresetDeleted>
+    <MGAutoSell.PresetDeleteFailed>プリセットの削除に失敗しました: {0}</MGAutoSell.PresetDeleteFailed>
+    <MGAutoSell.PresetLoaded>プリセット「{0}」を読み込みました（{1}件のルール）。</MGAutoSell.PresetLoaded>
+    <MGAutoSell.PresetLoadFailed>プリセットの読み込みに失敗しました: {0}</MGAutoSell.PresetLoadFailed>
+    <MGAutoSell.PresetOverwriteConfirm>プリセット「{0}」は既に存在します。上書きしますか？</MGAutoSell.PresetOverwriteConfirm>
+    <MGAutoSell.PresetDeleteConfirm>本当にプリセット「{0}」を削除しますか？</MGAutoSell.PresetDeleteConfirm>
+    <MGAutoSell.PresetLoadOverwriteConfirm>現在の取引ルールをすべてプリセット「{0}」で置き換えますか？</MGAutoSell.PresetLoadOverwriteConfirm>
+    <MGAutoSell.LoadOverwrite>上書き読込</MGAutoSell.LoadOverwrite>
+    <MGAutoSell.LoadOverwriteTooltip>現在の全取引ルールをこのプリセットで置き換えます</MGAutoSell.LoadOverwriteTooltip>
+    <MGAutoSell.LoadAppend>追加読込</MGAutoSell.LoadAppend>
+    <MGAutoSell.LoadAppendTooltip>このプリセットのルールを現在の取引ルールに追加します</MGAutoSell.LoadAppendTooltip>
+    <MGAutoSell.DeletePresetTooltip>このプリセットを削除</MGAutoSell.DeletePresetTooltip>
+    <MGAutoSell.NoPresetsFound>保存されたプリセットはありません。</MGAutoSell.NoPresetsFound>
+    <MGAutoSell.ClipboardEmptyOrInvalid>クリップボードに有効な取引ルールプリセットデータがありません: {0}</MGAutoSell.ClipboardEmptyOrInvalid>
+</LanguageData>
