@@ -34,9 +34,6 @@
             <PrivateAssets>all</PrivateAssets>
             <IncludeAssets>compile; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
         </PackageReference>
-        <PackageReference Include="System.Data.DataSetExtensions" Version="4.5.0">
-            <PrivateAssets>all</PrivateAssets>
-        </PackageReference>
     </ItemGroup>
     <ItemDefinitionGroup>
         <Reference>
@@ -44,16 +41,8 @@
         </Reference>
     </ItemDefinitionGroup>
     <ItemGroup>
-      <Reference Include="TDS_Bug_Fixes">
-        <HintPath>..\..\..\..\..\workshop\content\294100\3529433984\1.7\Assemblies\TDS_Bug_Fixes.dll</HintPath>
-        <Private>false</Private>
-      </Reference>
       <Reference Include="TD_Find_Lib">
         <HintPath>..\..\..\..\..\workshop\content\294100\3529443295\1.7\Assemblies\TD_Find_Lib.dll</HintPath>
-        <Private>false</Private>
-      </Reference>
-      <Reference Include="UnityStubs">
-        <HintPath>..\..\..\UnityStubs.dll</HintPath>
         <Private>false</Private>
       </Reference>
     </ItemGroup>

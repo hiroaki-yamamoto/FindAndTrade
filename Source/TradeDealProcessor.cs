@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -9,6 +9,7 @@ using LudeonTK;
 using MGAutoSell.Extensions;
 using MGAutoSell.Filter;
 using MGAutoSell.HarmonyPatches;
+using MGAutoSell.Processing;
 using MGAutoSell.Query;
 using RimWorld;
 using RimWorld.Planet;
@@ -17,180 +18,113 @@ using Verse;
 
 namespace MGAutoSell
 {
+    /// <summary>
+    /// Represents a tradeable item entry along with the quantities held by the colony and the trader.
+    /// </summary>
+    /// <param name="Tradeable">The underlying RimWorld <see cref="RimWorld.Tradeable"/> row.</param>
+    /// <param name="ThingDef">The item definition of the tradeable.</param>
+    /// <param name="ColonyCount">Quantity available from the colony.</param>
+    /// <param name="TraderCount">Quantity available from the trader.</param>
     public record TradeEntry(Tradeable Tradeable, ThingDef ThingDef, int ColonyCount, int TraderCount);
 
+    /// <summary>
+    /// Represents a queued buy or sell order for a specific <see cref="RimWorld.Tradeable"/> and quantity.
+    /// </summary>
+    /// <param name="Tradeable">The target <see cref="RimWorld.Tradeable"/>.</param>
+    /// <param name="Count">The quantity scheduled to be transferred.</param>
     public record SellItem(Tradeable Tradeable, int Count)
     {
+        /// <summary>
+        /// Gets or sets the target <see cref="RimWorld.Tradeable"/>.
+        /// </summary>
         public Tradeable Tradeable { get; set; } = Tradeable;
+
+        /// <summary>
+        /// Gets or sets the quantity scheduled to be transferred.
+        /// </summary>
         public int Count { get; set; } = Count;
     }
 
+    /// <summary>
+    /// Orchestrates automated trade deal evaluation, stack splitting, currency normalization, and summary notifications.
+    /// </summary>
+    /// <remarks>
+    /// Delegates inventory tracking to <see cref="ITradeInventoryAggregator"/>, quantity math to
+    /// <see cref="ITradeOrderCalculator"/>, and over-budget trimming to <see cref="ITradeBudgetNormalizer"/>
+    /// in compliance with SOLID principles.
+    /// </remarks>
     [StaticConstructorOnStartup]
     public static class TradeDealProcessor
     {
-        private static MethodInfo _propertySetter = AccessTools.PropertySetter(typeof(Tradeable), nameof(Tradeable.CountToTransfer));
-        private static Dictionary<ThingDef, int> ThingDefAggregations = new();
-        private static Dictionary<ThingDef, int> ExtrasOnMap = new();
-        private static Dictionary<TradeRule, int> TradeRuleAggregations = new();
+        private static readonly MethodInfo PropertySetter =
+            AccessTools.PropertySetter(typeof(Tradeable), nameof(Tradeable.CountToTransfer));
 
-        private static bool GroupedTrading = false;
-        private static string Gray = ColorUtility.ToHtmlStringRGB(TradeUI.NoTradeColor);
+        private static readonly string Gray = ColorUtility.ToHtmlStringRGB(TradeUI.NoTradeColor);
 
+        private static readonly string
+            Spent = "MGAutoSell.Spent".Translate(),
+            Earned = "MGAutoSell.Earned".Translate(),
+            Bought = "MGAutoSell.Bought".Translate(),
+            Sold = "MGAutoSell.Sold".Translate();
+
+        /// <summary>
+        /// Gets or sets the <see cref="ITradeInventoryAggregator"/> responsible for tracking item counts during trade sessions.
+        /// </summary>
+        public static ITradeInventoryAggregator InventoryAggregator { get; set; } = new TradeInventoryAggregator();
+
+        /// <summary>
+        /// Gets or sets the <see cref="ITradeOrderCalculator"/> responsible for calculating buy and sell quantities.
+        /// </summary>
+        public static ITradeOrderCalculator OrderCalculator { get; set; } = TradeOrderCalculator.Instance;
+
+        /// <summary>
+        /// Gets or sets the <see cref="ITradeBudgetNormalizer"/> responsible for trimming over-budget trade orders.
+        /// </summary>
+        public static ITradeBudgetNormalizer BudgetNormalizer { get; set; } = TradeBudgetNormalizer.Instance;
+
+        /// <summary>
+        /// Starts a grouped trading session across multiple traders (such as multiple passing orbital ships).
+        /// </summary>
         public static void StartGroupedTrading()
         {
-            if (GroupedTrading)
+            if (!InventoryAggregator.StartGroupedSession())
             {
                 Log.Error("Attempted to start a trading session while one is already running");
-                return;
             }
-
-            ThingDefAggregations.Clear();
-            TradeRuleAggregations.Clear();
-            ExtrasOnMap.Clear();
-            GroupedTrading = true;
         }
 
+        /// <summary>
+        /// Ends a grouped trading session and clears all session aggregations.
+        /// </summary>
         public static void EndGroupedTrading()
         {
-            if (!GroupedTrading)
+            if (!InventoryAggregator.EndGroupedSession())
             {
                 Log.Error("Attempted to end a trading session while one is not running.");
-                return;
             }
-
-            ThingDefAggregations.Clear();
-            TradeRuleAggregations.Clear();
-            ExtrasOnMap.Clear();
-            GroupedTrading = false;
         }
 
+        /// <summary>
+        /// Development debug action that executes automated trades against all passing orbital ships on the current map.
+        /// </summary>
         [DebugAction("FindAndTrade", "DoTrade")]
         public static void DEBUG_DoTrade()
         {
-            var pawn = Find.CurrentMap.mapPawns.PawnsInFaction(Faction.OfPlayer);
-            var socialPawn = pawn.MaxBy(x => x.skills?.GetSkill(SkillDefOf.Social).Level);
+            var pawns = Find.CurrentMap.mapPawns.PawnsInFaction(Faction.OfPlayer);
+            var socialPawn = pawns.MaxBy(static x => x.skills?.GetSkill(SkillDefOf.Social).Level);
             var ships = Find.CurrentMap.passingShipManager.passingShips;
+
             StartGroupedTrading();
-            foreach (var passingShip in ships)
-            {
-                TradeSession.SetupWith(passingShip as TradeShip, socialPawn, false);
-                var deal = TradeSession.deal;
-                DoTradeDeal(deal);
-
-                var silver = deal.CurrencyTradeable.CountToTransfer;
-
-                var buy = deal.AllTradeables
-                    .Where(x => x.CountToTransfer > 0 && !x.IsCurrency)
-                    .Select(x => (x.ThingDef.label, x.CountToTransfer))
-                    .ToList();
-                var sell = deal.AllTradeables
-                    .Where(x => x.CountToTransfer < 0 && !x.IsCurrency)
-                    .Select(x => (x.ThingDef.label, x.CountToTransfer))
-                    .ToList();
-
-                if(!buy.Any() && !sell.Any())
-                    continue;
-
-                if (!deal.TryExecute(out var actuallyTraded)) 
-                    continue;
-
-                if(!actuallyTraded)
-                    Debugger.Break();
-
-                DoLetter(passingShip as ITrader, socialPawn, deal, socialPawn.Position, buy, sell, silver);
-
-            }
-            EndGroupedTrading();
-        }
-
-        public static void DoTrade(Pawn socialPawn, ITrader trader)
-        {
-            if (!trader.CanTradeNow)
-                return;
-
-            var comp = Current.Game.GetComponent<TradeRulesGameComp>();
-
-            if (comp.traders.Contains(trader))
-                return;
-
-            TradeSession.SetupWith(trader, socialPawn, false);
-            var deal = TradeSession.deal;
-            DoTradeDeal(deal);
-            if(trader is ILoadReferenceable)
-                comp.traders.Add(trader);
-            var silver = deal.CurrencyTradeable.CountToTransfer;
-
-            var buy = deal.AllTradeables
-                .Where(x => x.CountToTransfer > 0 && !x.IsCurrency)
-                .Select(x => (x.ThingDef.label, x.CountToTransfer))
-                .ToList();
-            var sell = deal.AllTradeables
-                .Where(x => x.CountToTransfer < 0 && !x.IsCurrency)
-                .Select(x => (x.ThingDef.label, x.CountToTransfer))
-                .ToList();
-
-            if (!buy.Any() && !sell.Any())
-                return;
-
-            if (!deal.TryExecute(out var actuallyTraded))
-                return;
-
-            DoLetter(trader, socialPawn, deal, socialPawn.Position, buy, sell, silver);
-
-        }
-
-        public static void DoTradeShips(Pawn socialPawn)
-        {
-            var comp = Current.Game.GetComponent<TradeRulesGameComp>();
-            var ships = socialPawn.Map.passingShipManager.passingShips.ToList();
-
-            ships.RemoveAll(x =>
-            {
-                if (x is not ITrader trader)
-                    return true;
-
-                return comp.traders.Contains(trader) ||
-                       !socialPawn.CanTradeWith(trader.Faction, trader.TraderKind);
-            });
-
-            if(!ships.Any()) 
-                return;
-
             try
             {
-                StartGroupedTrading();
-
                 foreach (var passingShip in ships)
                 {
-                    var ship = (TradeShip)passingShip;
-
-                    if(ship == null)
-                        Log.Warning($"Ship was null? Perhaps not a ship? '{passingShip.GetType()}'. Skipping.");
-
-                    TradeSession.SetupWith(ship, socialPawn, false);
-                    var deal = TradeSession.deal;
-                    DoTradeDeal(deal);
-
-                    comp.traders.Add(passingShip as ITrader);
-
-                    var silver = deal.CurrencyTradeable.CountToTransfer;
-
-                    var buy = deal.AllTradeables
-                        .Where(x => x.CountToTransfer > 0 && !x.IsCurrency)
-                        .Select(x => (x.ThingDef.label, x.CountToTransfer))
-                        .ToList();
-                    var sell = deal.AllTradeables
-                        .Where(x => x.CountToTransfer < 0 && !x.IsCurrency)
-                        .Select(x => (x.ThingDef.label, x.CountToTransfer))
-                        .ToList();
-
-                    if (!buy.Any() && !sell.Any())
+                    if (passingShip is not TradeShip tradeShip)
+                    {
                         continue;
+                    }
 
-                    if (!deal.TryExecute(out var actuallyTraded))
-                        continue;
-
-                    DoLetter(passingShip as ITrader, socialPawn, deal, socialPawn.Position, buy, sell, silver);
+                    ExecuteSingleAutomatedTrade(tradeShip, socialPawn, recordTrader: false, breakOnUnexecuted: true);
                 }
             }
             finally
@@ -199,335 +133,661 @@ namespace MGAutoSell
             }
         }
 
-        public static void SimulateTrade(Pawn socialPawn, ITrader trader, bool doBuy = true)
+        /// <summary>
+        /// Executes an automated trade session between <paramref name="socialPawn"/> and <paramref name="trader"/>.
+        /// </summary>
+        /// <param name="socialPawn">The colonist negotiator performing the trade.</param>
+        /// <param name="trader">The visiting trader or settlement to trade with.</param>
+        public static void DoTrade(Pawn socialPawn, ITrader trader)
         {
-            if (!trader.CanTradeNow)
+            if (trader is not { CanTradeNow: true })
+            {
                 return;
+            }
 
             var comp = Current.Game.GetComponent<TradeRulesGameComp>();
-
-            TradeSession.SetupWith(trader, socialPawn, false);
-            var deal = TradeSession.deal;
-            DoTradeDeal(deal);
-            comp.traders.Add(trader);
-            var silver = deal.CurrencyTradeable.CountToTransfer;
-
-            var buy = deal.AllTradeables
-                .Where(x => x.CountToTransfer > 0 && !x.IsCurrency)
-                .Select(x => (x.ThingDef.label, x.CountToTransfer))
-                .ToList();
-            var sell = deal.AllTradeables
-                .Where(x => x.CountToTransfer < 0 && !x.IsCurrency)
-                .Select(x => (x.ThingDef.label, x.CountToTransfer))
-                .ToList();
-
-            if (!buy.Any() && !sell.Any())
+            if (comp.traders.Contains(trader))
+            {
                 return;
+            }
+
+            ExecuteSingleAutomatedTrade(trader, socialPawn, recordTrader: trader is ILoadReferenceable, breakOnUnexecuted: false, comp: comp);
         }
 
+        /// <summary>
+        /// Executes automated trade sessions with all untraded passing orbital trade ships on <paramref name="socialPawn"/>'s map.
+        /// </summary>
+        /// <param name="socialPawn">The colonist negotiator operating the comms console.</param>
+        public static void DoTradeShips(Pawn socialPawn)
+        {
+            var comp = Current.Game.GetComponent<TradeRulesGameComp>();
+            var passingShips = socialPawn.Map.passingShipManager.passingShips;
+            if (passingShips == null || passingShips.Count == 0)
+            {
+                return;
+            }
+
+            var eligibleShips = new List<TradeShip>(passingShips.Count);
+            for (int i = 0; i < passingShips.Count; i++)
+            {
+                if (passingShips[i] is TradeShip ship &&
+                    !comp.traders.Contains(ship) &&
+                    socialPawn.CanTradeWith(ship.Faction, ((ITrader)ship).TraderKind))
+                {
+                    eligibleShips.Add(ship);
+                }
+            }
+
+            if (eligibleShips.Count == 0)
+            {
+                return;
+            }
+
+            try
+            {
+                StartGroupedTrading();
+
+                for (int i = 0; i < eligibleShips.Count; i++)
+                {
+                    var ship = eligibleShips[i];
+                    ExecuteSingleAutomatedTrade(ship, socialPawn, recordTrader: true, breakOnUnexecuted: false, comp: comp);
+                }
+            }
+            finally
+            {
+                EndGroupedTrading();
+            }
+        }
+
+        /// <summary>
+        /// Evaluates active trade rules against the given <paramref name="deal"/>, populating buy/sell transfer counts
+        /// and balancing against available silver.
+        /// </summary>
+        /// <remarks>
+        /// Time Complexity:
+        /// - Map stock exclusions use a <see cref="HashSet{T}"/> of colony tradeable things in O(N + T) time instead of O(N * T) list removals.
+        /// - Stack splitting partitions stacks in a single pass with lazy list creation instead of multiple <c>GroupBy</c>/<c>ToDictionary</c> calls.
+        /// - Budget normalization trims from the end of the order list in O(1) time per step.
+        /// </remarks>
+        /// <param name="deal">The active RimWorld <see cref="TradeDeal"/> to populate.</param>
+        /// <param name="doBuy">Whether buy orders should be evaluated in addition to sell orders.</param>
         public static void DoTradeDeal(TradeDeal deal, bool doBuy = true)
         {
             var map = TradeSession.playerNegotiator?.Map;
-            if (map == null) return;
+            if (map == null)
+            {
+                return;
+            }
 
             var autoTrade = Current.Game.GetComponent<TradeRulesGameComp>();
-
-            if (!autoTrade.tradeRules.Any())
+            if (autoTrade == null || !autoTrade.tradeRules.Any())
+            {
                 return;
+            }
 
-            var tradeables = deal.AllTradeables;
-            if (tradeables == null) return;
+            var tradeables = deal?.AllTradeables;
+            if (tradeables == null)
+            {
+                return;
+            }
+
+            InventoryAggregator.ClearIfNotGrouped();
+
+            var itemCache = new List<Tradeable>(tradeables.Count);
+            var initialCountsByDef = new Dictionary<ThingDef, int>();
+            var colonyTradeableThings = new HashSet<Thing>();
+
+            for (int i = 0; i < tradeables.Count; i++)
+            {
+                var tradeable = tradeables[i];
+                if (tradeable.thingsColony != null)
+                {
+                    for (int c = 0; c < tradeable.thingsColony.Count; c++)
+                    {
+                        colonyTradeableThings.Add(tradeable.thingsColony[c]);
+                    }
+                }
+
+                if (!tradeable.TraderWillTrade || tradeable.ThingDef == null)
+                {
+                    continue;
+                }
+
+                itemCache.Add(tradeable);
+                int heldByColony = tradeable.CountHeldBy(Transactor.Colony);
+                if (initialCountsByDef.TryGetValue(tradeable.ThingDef, out int existing))
+                {
+                    initialCountsByDef[tradeable.ThingDef] = existing + heldByColony;
+                }
+                else
+                {
+                    initialCountsByDef[tradeable.ThingDef] = heldByColony;
+                }
+            }
+
+            if (itemCache.Count == 0)
+            {
+                return;
+            }
+
+            foreach (var (def, count) in initialCountsByDef)
+            {
+                InventoryAggregator.TryAddInitialCount(def, count);
+            }
+
+            // Don't buy more medicine if there's literally heaps in the Hospital already...
+            // Filter in O(N) using colonyTradeableThings HashSet instead of O(N * T) List.Remove.
+            var allMapThings = map.listerThings.AllThings;
+            var itemsOnMap = new List<Thing>();
+            var playerFaction = Faction.OfPlayer;
+            var zoneManager = map.zoneManager;
+            var fogGrid = map.fogGrid;
+
+            for (int i = 0; i < allMapThings.Count; i++)
+            {
+                var thing = allMapThings[i];
+                if (thing == null || colonyTradeableThings.Contains(thing))
+                {
+                    continue;
+                }
+
+                var pos = thing.Position;
+                if ((!thing.IsForbidden(playerFaction) || zoneManager.ZoneAt(pos) != null) &&
+                    (fogGrid == null || !fogGrid.IsFogged(pos)))
+                {
+                    itemsOnMap.Add(thing);
+                }
+            }
 
             var sellDictionary = new Dictionary<Tradeable, int>();
             var buyDictionary = new Dictionary<Tradeable, int>();
-            var itemCache = tradeables.Where(x => x.TraderWillTrade && x.ThingDef != null).ToList();
+            var junkDesignations = BuildJunkSetForMap(map);
 
-            if (!GroupedTrading)
+            for (int i = 0; i < tradeables.Count; i++)
             {
-                ThingDefAggregations.Clear();
-                TradeRuleAggregations.Clear();
-                ExtrasOnMap.Clear();
-            }
-
-            if(!itemCache.Any())
-                return;
-
-            var itemsToAdd = itemCache.GroupBy(x => x.ThingDef).ToDictionary(x => x.Key,
-                x => x.ToList().Sum(x => x.CountHeldBy(Transactor.Colony)));
-
-            foreach (var item in itemsToAdd)
-            {
-                ThingDefAggregations.TryAdd(item.Key, item.Value);
-            }
-            // Don't buy more medicine if there's literally heaps in the Hospital already...
-            var itemsOnMap = map.listerThings.AllThings.Where(x => (!x.IsForbidden(Faction.OfPlayer) || x.Map.zoneManager.ZoneAt(x.Position) != null) & !x.Position.Fogged(x.Map)).ToList();
-            tradeables.ForEach(x => x.thingsColony.ForEach(y => itemsOnMap.Remove(y)));
-            //var countsOnMap = itemsOnMap
-            //    .GroupBy(x => x.def)
-            //    .ToDictionary(x => x.Key, x => x.ToList().Sum(y => y.stackCount));
-
-
-            foreach (var tradeable in tradeables)
-            {
-                var junk = tradeable.thingsColony.Where(x => 
-                    x.Map?.designationManager?.DesignationOn(x, MGDesignatorDefOf.MGAutoSell) != null).ToList();
-
-                if(!junk.Any())
-                    continue;
-
-                var total = junk.Sum(x => x.stackCount);
-                AddCount(null, tradeable.ThingDef, -total);
-                sellDictionary[tradeable] = total;
-            }
-            itemCache.RemoveAll(x => !x.thingsColony.Any() && !x.thingsTrader.Any());
-
-            var pairings = new Dictionary<Tradeable, TradeRule>();
-            foreach (var rule in autoTrade.tradeRules.Where(x => x.Enabled && x.search.Children.queries.Any()))
-            {
-                
-                var items = new List<TradeEntry>();
-                if (Mod.Settings.scanEveryStack)
+                var tradeable = tradeables[i];
+                if (tradeable.thingsColony == null || tradeable.thingsColony.Count == 0)
                 {
-                    items = new List<TradeEntry>();
-                    foreach (var tradeable in itemCache.Where(x => !x.IsCurrency))
+                    continue;
+                }
+
+                int junkTotal = 0;
+                for (int c = 0; c < tradeable.thingsColony.Count; c++)
+                {
+                    var colonyThing = tradeable.thingsColony[c];
+                    if (CacheUtility.IsDesignatedJunk(colonyThing, junkDesignations))
                     {
-                        if(AddRuleLabelsToTradeUI.ExtraLabels.ContainsKey(tradeable))
-                            continue;
-
-                        var stacksColony = tradeable.thingsColony
-                            .GroupBy(x => rule.search.AppliesTo(x, x.Map))
-                            .ToDictionary(x => x.Key, x => x.ToList());
-
-                        var stacksTrader = tradeable.thingsTrader
-                            .GroupBy(x => rule.search.AppliesTo(x, x.Map))
-                            .ToDictionary(x => x.Key, x => x.ToList());
-
-                        var matchedColony = stacksColony.TryGetValue(true, out var matchedColonyStacks);
-                        var unmatchedColony = stacksColony.TryGetValue(false, out var unmatchedColonyStacks);
-
-                        var matchedTrader = stacksTrader.TryGetValue(true,out var matchedTraderStacks);
-                        var unmatchedTrader = stacksTrader.TryGetValue(false,out var unmatchedTraderStacks);
-
-                        // No Op
-                        if (!matchedColony && unmatchedColony && !matchedTrader && unmatchedTrader)
-                            continue;
-
-                        // Claim full
-                        if ((matchedColony || matchedTrader) && (!unmatchedColony && !unmatchedTrader))
-                        {
-                            AddRuleLabelsToTradeUI.ExtraLabels[tradeable] =
-                                $"<i><color=#{Gray}> - ({rule.search.name})</color></i>";
-                            items.Add(new TradeEntry(tradeable, tradeable.ThingDef,
-                                tradeable.CountHeldBy(Transactor.Colony),
-                                tradeable.CountHeldBy(Transactor.Trader)));
-                        }
-                        // Split
-                        else if (matchedColony is var v &&
-                                 ((v || matchedTrader) && (unmatchedColony || unmatchedTrader)))
-                        {
-                            var claimedTradeable = new Tradeable
-                            {
-                                thingsColony = matchedColonyStacks ?? new(),
-                                thingsTrader = matchedTraderStacks ?? new()
-                            };
-
-                            tradeable.thingsColony = unmatchedColonyStacks ?? new();
-                            tradeable.thingsTrader = unmatchedTraderStacks ?? new();
-
-                            if (!claimedTradeable.HasAnyThing || !tradeable.HasAnyThing)
-                                throw new Exception("Empty tradeable");
-
-                            AddRuleLabelsToTradeUI.ExtraLabels[claimedTradeable] =
-                                $"<i><color=#{Gray}> - ({rule.search.name})</color></i>";
-
-                            deal.AllTradeables.Add(claimedTradeable);
-                            items.Add(new TradeEntry(claimedTradeable, claimedTradeable.ThingDef,
-                                claimedTradeable.CountHeldBy(Transactor.Colony),
-                                claimedTradeable.CountHeldBy(Transactor.Trader)));
-                        }
+                        junkTotal += colonyThing.stackCount;
                     }
                 }
-                else
-                    items = itemCache
-                    .Where(x => 
-                        !x.IsCurrency && 
-                        x.AnyThingNotJunk(out var thing) && 
-                        rule.search.AppliesTo(thing)
-                        )
-                    .Select(x => new TradeEntry(x, x.ThingDef, x.CountHeldBy(Transactor.Colony), x.CountHeldBy(Transactor.Trader)))
-                    .ToList();
 
-
-                if(rule.Aggregation == TradeRuleAggregation.Rule)
-                    items.ForEach(x => AddCount(rule, x.ThingDef, x.ColonyCount));
-
-                var toSell = rule.AllowSell
-                    ? items
-                        .Where(x => 
-                            GetCount(rule, x.ThingDef) > rule.Export &&
-                           (!rule.search.TradeQueries.Any() ||
-                            rule.search.AppliesTo(new TradeContext(deal, x.Tradeable, TradeAction.PlayerSells))))
-                        .ToList()
-                    : [];
-                toSell.ForEach(x =>
+                if (junkTotal > 0)
                 {
-                    items.Remove(x);
-                    itemCache.Remove(x.Tradeable);
-                    pairings.TryAdd(x.Tradeable, rule);
-                });
+                    InventoryAggregator.AddCount(null, tradeable.ThingDef, -junkTotal);
+                    sellDictionary[tradeable] = junkTotal;
+                }
+            }
 
-                var sellOrders = toSell.Select(x =>
+            itemCache.RemoveAll(static x =>
+                (x.thingsColony == null || x.thingsColony.Count == 0) &&
+                (x.thingsTrader == null || x.thingsTrader.Count == 0));
+
+            var pairings = new Dictionary<Tradeable, TradeRule>();
+            var claimedTradeables = new HashSet<Tradeable>();
+            bool scanEveryStack = Mod.Settings?.scanEveryStack ?? true;
+
+            foreach (var rule in autoTrade.tradeRules)
+            {
+                if (rule is not { Enabled: true } || rule.search?.Children?.queries == null || rule.search.Children.queries.Count == 0)
                 {
-                    var sellOrder = (x.Tradeable,
-                        Math.Min(GetCount(rule, x.ThingDef) - rule.Export, x.ColonyCount));
-                    AddCount(rule, x.ThingDef, -sellOrder.Item2);
-                    return sellOrder;
-                }).ToList();
+                    continue;
+                }
 
+                var items = scanEveryStack
+                    ? CollectEntriesByScanningStacks(deal, itemCache, rule)
+                    : CollectEntriesByFirstItem(itemCache, rule);
 
-                foreach (var (tradeable, count) in sellOrders)
+                if (rule.Aggregation == TradeRuleAggregation.Rule)
                 {
-                    if(sellDictionary.TryAdd(tradeable, count))
+                    for (int i = 0; i < items.Count; i++)
+                    {
+                        var entry = items[i];
+                        InventoryAggregator.AddCount(rule, entry.ThingDef, entry.ColonyCount);
+                    }
+                }
+
+                claimedTradeables.Clear();
+                var sellOrders = new List<(Tradeable Tradeable, int Count)>();
+
+                if (rule.AllowSell)
+                {
+                    bool hasTradeQueries = rule.search.TradeQueries.Length > 0;
+                    int writeIdx = 0;
+
+                    for (int i = 0; i < items.Count; i++)
+                    {
+                        var entry = items[i];
+                        int currentStock = InventoryAggregator.GetCount(rule, entry.ThingDef);
+                        if (currentStock > rule.Export &&
+                            (!hasTradeQueries || rule.search.AppliesTo(new TradeContext(deal, entry.Tradeable, TradeAction.PlayerSells))))
+                        {
+                            int sellQty = OrderCalculator.CalculateSellQuantity(currentStock, rule.Export, entry.ColonyCount);
+                            InventoryAggregator.AddCount(rule, entry.ThingDef, -sellQty);
+                            sellOrders.Add((entry.Tradeable, sellQty));
+                            claimedTradeables.Add(entry.Tradeable);
+                            pairings.TryAdd(entry.Tradeable, rule);
+                        }
+                        else
+                        {
+                            items[writeIdx++] = entry;
+                        }
+                    }
+
+                    if (writeIdx < items.Count)
+                    {
+                        items.RemoveRange(writeIdx, items.Count - writeIdx);
+                    }
+
+                    if (claimedTradeables.Count > 0)
+                    {
+                        itemCache.RemoveAll(claimedTradeables.Contains);
+                    }
+                }
+
+                for (int i = 0; i < sellOrders.Count; i++)
+                {
+                    var (tradeable, count) = sellOrders[i];
+                    if (!sellDictionary.TryAdd(tradeable, count))
+                    {
+                        sellDictionary[tradeable] += count;
+                    }
+                }
+
+                // Single-pass stock addition for extra items on the map (no GroupBy allocation needed).
+                for (int i = 0; i < itemsOnMap.Count; i++)
+                {
+                    var mapItem = itemsOnMap[i];
+                    if (rule.search.AppliesTo(mapItem, mapItem.Map))
+                    {
+                        InventoryAggregator.AddCount(rule, mapItem.def, mapItem.stackCount);
+                    }
+                }
+
+                var buyOrders = new List<(Tradeable Tradeable, int Count)>();
+                if (doBuy && rule.AllowBuy)
+                {
+                    claimedTradeables.Clear();
+                    bool hasTradeQueries = rule.search.TradeQueries.Length > 0;
+
+                    for (int i = 0; i < items.Count; i++)
+                    {
+                        var entry = items[i];
+                        int currentStock = InventoryAggregator.GetCount(rule, entry.ThingDef);
+                        if (currentStock < rule.Import &&
+                            (!hasTradeQueries || rule.search.AppliesTo(new TradeContext(deal, entry.Tradeable, TradeAction.PlayerBuys))))
+                        {
+                            int buyQty = OrderCalculator.CalculateBuyQuantity(currentStock, rule.Import, entry.TraderCount);
+                            InventoryAggregator.AddCount(rule, entry.ThingDef, buyQty);
+                            buyOrders.Add((entry.Tradeable, buyQty));
+                            claimedTradeables.Add(entry.Tradeable);
+                        }
+                    }
+
+                    if (claimedTradeables.Count > 0)
+                    {
+                        itemCache.RemoveAll(claimedTradeables.Contains);
+                    }
+                }
+
+                for (int i = 0; i < buyOrders.Count; i++)
+                {
+                    var (tradeable, count) = buyOrders[i];
+                    if (!buyDictionary.TryAdd(tradeable, count))
+                    {
+                        buyDictionary[tradeable] += count;
+                    }
+                }
+
+                // Remove rule labels from entries that resulted in neither a sell nor a buy order.
+                for (int i = 0; i < items.Count; i++)
+                {
+                    var candidate = items[i].Tradeable;
+                    bool inSell = false;
+                    for (int s = 0; s < sellOrders.Count; s++)
+                    {
+                        if (sellOrders[s].Tradeable == candidate)
+                        {
+                            inSell = true;
+                            break;
+                        }
+                    }
+
+                    if (inSell)
+                    {
                         continue;
+                    }
 
-                    sellDictionary[tradeable] += count;
+                    bool inBuy = false;
+                    for (int b = 0; b < buyOrders.Count; b++)
+                    {
+                        if (buyOrders[b].Tradeable == candidate)
+                        {
+                            inBuy = true;
+                            break;
+                        }
+                    }
+
+                    if (!inBuy)
+                    {
+                        AddRuleLabelsToTradeUI.ExtraLabels.Remove(candidate);
+                    }
                 }
-
-                foreach (var matchedItem in itemsOnMap
-                             .Where(x => rule.search.AppliesTo(x, x.Map))
-                             .GroupBy(x => x.def))
-                {
-                    var totalStock = matchedItem.Sum(x => x.stackCount);
-                    AddCount(rule, matchedItem.Key, totalStock);
-                }
-
-                var toBuy =
-                    doBuy && rule.AllowBuy
-                        ? items
-                            .Where(x =>
-                                GetCount(rule, x.ThingDef) < rule.Import &&
-                          (!rule.search.TradeQueries.Any() || rule.search.AppliesTo(new TradeContext(deal, x.Tradeable, TradeAction.PlayerBuys))))
-                            .ToList()
-                        : [];
-                toBuy.ForEach(x => itemCache.Remove(x.Tradeable));
-
-
-                var buyOrders = toBuy.Select(x =>
-                {
-                    var buyOrder = (x.Tradeable, Math.Min(rule.Import - GetCount(rule, x.ThingDef), x.TraderCount));
-                    AddCount(rule, x.ThingDef, buyOrder.Item2);
-                    return buyOrder;
-                }).ToList();
-
-                foreach (var (tradeable, count) in buyOrders)
-                {
-                    if (buyDictionary.TryAdd(tradeable, count))
-                        continue;
-
-                    buyDictionary[tradeable] += count;
-                }
-
-                items
-                    .Where(trade =>
-                    sellOrders.All(x => x.Tradeable != trade.Tradeable) &&
-                    buyOrders.All(x => x.Tradeable != trade.Tradeable))
-                    .ToList()
-                    .ForEach(x => AddRuleLabelsToTradeUI.ExtraLabels.Remove(x.Tradeable));
             }
 
             foreach (var (tradeable, toSell) in sellDictionary)
+            {
                 SetTradeCount(tradeable, -toSell);
+            }
 
             foreach (var (tradeable, toBuy) in buyDictionary)
+            {
                 SetTradeCount(tradeable, toBuy);
+            }
 
             deal.UpdateCurrencyCount();
             AddRuleLabelsToTradeUI.TradeWindow?.Notify_CommonSearchChanged();
 
-            // Buying too much
-            var buyReversed = buyDictionary.Select(x => new SellItem(x.Key, x.Value)).ToList();
-            buyReversed.Reverse();
-            while (deal.CurrencyTradeable.CountToTransfer < 0 && deal.CurrencyTradeable.CountToTransfer * -1 > deal.CurrencyTradeable.CountHeldBy(Transactor.Colony))
+            // Buying too much: trim from the end of buyOrdersList (O(1) removal at tail)
+            if (deal.CurrencyTradeable != null)
             {
-                var gap = deal.CurrencyTradeable.CountToTransfer * -1 -
-                          deal.CurrencyTradeable.CountHeldBy(Transactor.Colony);
-                deal.NormalizeWith(buyReversed, pairings, gap);
+                var buyOrdersList = new List<SellItem>(buyDictionary.Count);
+                foreach (var (tradeable, count) in buyDictionary)
+                {
+                    buyOrdersList.Add(new SellItem(tradeable, count));
+                }
+
+                int colonyCurrency = deal.CurrencyTradeable.CountHeldBy(Transactor.Colony);
+                while (buyOrdersList.Count > 0 &&
+                       deal.CurrencyTradeable.CountToTransfer < 0 &&
+                       -deal.CurrencyTradeable.CountToTransfer > colonyCurrency)
+                {
+                    int gap = -deal.CurrencyTradeable.CountToTransfer - colonyCurrency;
+                    if (!BudgetNormalizer.NormalizeStep(buyOrdersList, pairings, gap, InventoryAggregator, SetTradeCount))
+                    {
+                        break;
+                    }
+
+                    deal.UpdateCurrencyCount();
+                }
+
+                // Selling too much: trim from the end of sellOrdersList (O(1) removal at tail)
+                var sellOrdersList = new List<SellItem>(sellDictionary.Count);
+                foreach (var (tradeable, count) in sellDictionary)
+                {
+                    sellOrdersList.Add(new SellItem(tradeable, count));
+                }
+
+                int traderCurrency = deal.CurrencyTradeable.CountHeldBy(Transactor.Trader);
+                while (sellOrdersList.Count > 0 &&
+                       deal.CurrencyTradeable.CountToTransfer > traderCurrency)
+                {
+                    int gap = deal.CurrencyTradeable.CountToTransfer - traderCurrency;
+                    if (!BudgetNormalizer.NormalizeStep(sellOrdersList, pairings, gap, InventoryAggregator, SetTradeCount))
+                    {
+                        break;
+                    }
+
+                    deal.UpdateCurrencyCount();
+                }
             }
 
-            // Selling too much
-            var sellReversed = sellDictionary.Select(x => new SellItem(x.Key, x.Value)).ToList();
-            sellReversed.Reverse();
-            while (deal.CurrencyTradeable.CountToTransfer > deal.CurrencyTradeable.CountHeldBy(Transactor.Trader))
+            // Sell marked items first: sort in-place only when there are multiple colony stacks.
+            for (int i = 0; i < deal.AllTradeables.Count; i++)
             {
-                var gap = deal.CurrencyTradeable.CountToTransfer -
-                          deal.CurrencyTradeable.CountHeldBy(Transactor.Trader);
-                deal.NormalizeWith(sellReversed, pairings, gap);
+                var colonyList = deal.AllTradeables[i].thingsColony;
+                if (colonyList is { Count: > 1 })
+                {
+                    colonyList.Sort((a, b) =>
+                    {
+                        bool aNotJunk = !CacheUtility.IsDesignatedJunk(a, junkDesignations);
+                        bool bNotJunk = !CacheUtility.IsDesignatedJunk(b, junkDesignations);
+                        return aNotJunk.CompareTo(bNotJunk);
+                    });
+                }
             }
-
-            // Sell marked items first
-            deal.AllTradeables.ForEach(x => x.thingsColony = x.thingsColony.OrderBy(x => x.Map?.designationManager.DesignationOn(x, MGDesignatorDefOf.MGAutoSell) == null).ToList());
         }
 
-        private static void NormalizeWith(this TradeDeal deal, List<SellItem> list, Dictionary<Tradeable, TradeRule> pairings, int gap)
+        private static List<TradeEntry> CollectEntriesByScanningStacks(
+            TradeDeal deal,
+            List<Tradeable> itemCache,
+            TradeRule rule)
         {
-            var item = list.FirstOrDefault();
-            var cost = Math.Max(item.Tradeable.CurTotalCurrencyCostForSource,
-                item.Tradeable.CurTotalCurrencyCostForDestination);
-            if (item.Count == 1 || cost < gap)
+            var items = new List<TradeEntry>();
+            string ruleTag = null;
+
+            for (int i = 0; i < itemCache.Count; i++)
             {
-                AddCount(pairings.TryGetValue(item.Tradeable), item.Tradeable.ThingDef, -1);
-                SetTradeCount(item.Tradeable, 0);
-                list.Remove(item);
+                var tradeable = itemCache[i];
+                if (tradeable.IsCurrency || AddRuleLabelsToTradeUI.ExtraLabels.ContainsKey(tradeable))
+                {
+                    continue;
+                }
+
+                PartitionStacks(tradeable.thingsColony, rule.search, out var matchedColonyStacks, out var unmatchedColonyStacks);
+                PartitionStacks(tradeable.thingsTrader, rule.search, out var matchedTraderStacks, out var unmatchedTraderStacks);
+
+                bool matchedColony = matchedColonyStacks is { Count: > 0 };
+                bool unmatchedColony = unmatchedColonyStacks is { Count: > 0 };
+                bool matchedTrader = matchedTraderStacks is { Count: > 0 };
+                bool unmatchedTrader = unmatchedTraderStacks is { Count: > 0 };
+
+                // No match
+                if (!matchedColony && !matchedTrader)
+                {
+                    continue;
+                }
+
+                // Claim full Tradeable
+                if (!unmatchedColony && !unmatchedTrader)
+                {
+                    ruleTag ??= $"<i><color=#{Gray}> - ({rule.search.name})</color></i>";
+                    AddRuleLabelsToTradeUI.ExtraLabels[tradeable] = ruleTag;
+                    items.Add(new TradeEntry(
+                        tradeable,
+                        tradeable.ThingDef,
+                        tradeable.CountHeldBy(Transactor.Colony),
+                        tradeable.CountHeldBy(Transactor.Trader)));
+                }
+                // Split Tradeable into matched and unmatched portions
+                else
+                {
+                    var claimedTradeable = new Tradeable
+                    {
+                        thingsColony = matchedColonyStacks ?? [],
+                        thingsTrader = matchedTraderStacks ?? []
+                    };
+
+                    tradeable.thingsColony = unmatchedColonyStacks ?? [];
+                    tradeable.thingsTrader = unmatchedTraderStacks ?? [];
+
+                    if (!claimedTradeable.HasAnyThing || !tradeable.HasAnyThing)
+                    {
+                        throw new InvalidOperationException("Empty tradeable produced while splitting stacks.");
+                    }
+
+                    ruleTag ??= $"<i><color=#{Gray}> - ({rule.search.name})</color></i>";
+                    AddRuleLabelsToTradeUI.ExtraLabels[claimedTradeable] = ruleTag;
+
+                    deal.AllTradeables.Add(claimedTradeable);
+                    items.Add(new TradeEntry(
+                        claimedTradeable,
+                        claimedTradeable.ThingDef,
+                        claimedTradeable.CountHeldBy(Transactor.Colony),
+                        claimedTradeable.CountHeldBy(Transactor.Trader)));
+                }
             }
-            else
+
+            return items;
+        }
+
+        private static List<TradeEntry> CollectEntriesByFirstItem(List<Tradeable> itemCache, TradeRule rule)
+        {
+            var items = new List<TradeEntry>();
+            for (int i = 0; i < itemCache.Count; i++)
             {
-                var costPer = cost / item.Tradeable.CountToTransfer;
-                var reduction = (int)(item.Tradeable.CountToTransfer < 0 ? Math.Floor(gap / costPer) : Math.Ceiling(gap / costPer));
-                item.Count = item.Tradeable.CountToTransfer - reduction;
-                AddCount(pairings.TryGetValue(item.Tradeable), item.Tradeable.ThingDef, -reduction);
-                SetTradeCount(item.Tradeable, item.Count);
+                var tradeable = itemCache[i];
+                if (!tradeable.IsCurrency &&
+                    tradeable.AnyThingNotJunk(out var thing) &&
+                    rule.search.AppliesTo(thing))
+                {
+                    items.Add(new TradeEntry(
+                        tradeable,
+                        tradeable.ThingDef,
+                        tradeable.CountHeldBy(Transactor.Colony),
+                        tradeable.CountHeldBy(Transactor.Trader)));
+                }
             }
-            deal.UpdateCurrencyCount();
+
+            return items;
+        }
+
+        /// <summary>
+        /// Partitions a list of <see cref="Thing"/> stacks into matching and non-matching lists in a single O(S) pass,
+        /// allocating lists lazily only when elements exist for that partition.
+        /// </summary>
+        private static void PartitionStacks(
+            List<Thing> source,
+            TradeQuerySearch search,
+            out List<Thing> matched,
+            out List<Thing> unmatched)
+        {
+            matched = null;
+            unmatched = null;
+            if (source == null || source.Count == 0)
+            {
+                return;
+            }
+
+            for (int i = 0; i < source.Count; i++)
+            {
+                var stack = source[i];
+                if (search.AppliesTo(stack, stack.Map))
+                {
+                    matched ??= [];
+                    matched.Add(stack);
+                }
+                else
+                {
+                    unmatched ??= [];
+                    unmatched.Add(stack);
+                }
+            }
+        }
+
+        private static HashSet<Thing> BuildJunkSetForMap(Map map)
+        {
+            var def = MGDesignatorDefOf.MGAutoSell;
+            var designations = def != null ? map?.designationManager?.SpawnedDesignationsOfDef(def) : null;
+            if (designations == null)
+            {
+                return null;
+            }
+
+            var set = new HashSet<Thing>();
+            foreach (var designation in designations)
+            {
+                if (designation.target.HasThing)
+                {
+                    set.Add(designation.target.Thing);
+                }
+            }
+
+            return set;
+        }
+
+        private static void ExecuteSingleAutomatedTrade(
+            ITrader trader,
+            Pawn socialPawn,
+            bool recordTrader,
+            bool breakOnUnexecuted,
+            TradeRulesGameComp comp = null)
+        {
+            TradeSession.SetupWith(trader, socialPawn, false);
+            var deal = TradeSession.deal;
+            DoTradeDeal(deal);
+
+            if (recordTrader && comp != null)
+            {
+                comp.traders.Add(trader);
+            }
+
+            int silver = deal.CurrencyTradeable.CountToTransfer;
+            ExtractExecutedTransfers(deal.AllTradeables, out var buy, out var sell);
+
+            if (buy.Count == 0 && sell.Count == 0)
+            {
+                return;
+            }
+
+            if (!deal.TryExecute(out bool actuallyTraded))
+            {
+                return;
+            }
+
+            if (breakOnUnexecuted && !actuallyTraded)
+            {
+                Debugger.Break();
+            }
+
+            DoLetter(trader, socialPawn, deal, socialPawn.Position, buy, sell, silver);
+        }
+
+        private static void ExtractExecutedTransfers(
+            List<Tradeable> allTradeables,
+            out List<(string label, int count)> buy,
+            out List<(string label, int count)> sell)
+        {
+            buy = [];
+            sell = [];
+            if (allTradeables == null)
+            {
+                return;
+            }
+
+            for (int i = 0; i < allTradeables.Count; i++)
+            {
+                var tradeable = allTradeables[i];
+                if (tradeable.IsCurrency || tradeable.CountToTransfer == 0)
+                {
+                    continue;
+                }
+
+                if (tradeable.CountToTransfer > 0)
+                {
+                    buy.Add((tradeable.ThingDef.label, tradeable.CountToTransfer));
+                }
+                else
+                {
+                    sell.Add((tradeable.ThingDef.label, tradeable.CountToTransfer));
+                }
+            }
         }
 
         private static void SetTradeCount(Tradeable tradeable, int count)
         {
-            _propertySetter.Invoke(tradeable, [count]);
-
+            PropertySetter.Invoke(tradeable, [count]);
         }
 
-        private static int GetCount(TradeRule rule, ThingDef def, Dictionary<ThingDef, int> recentlyTraded = null)
-        {
-            return rule.Aggregation switch
-            {
-                TradeRuleAggregation.ThingDef => ThingDefAggregations.GetValueOrDefault(def, 0),
-                TradeRuleAggregation.Rule => TradeRuleAggregations.GetValueOrDefault(rule, 0),
-                _ => throw new ArgumentOutOfRangeException()
-            };
-        }
-
-        private static void AddCount(TradeRule rule, ThingDef def, int amount)
-        {
-            switch (rule?.Aggregation ?? TradeRuleAggregation.ThingDef)
-            {
-                case TradeRuleAggregation.ThingDef:
-                    if (!ThingDefAggregations.TryAdd(def, amount))
-                        ThingDefAggregations[def] += amount;
-                    break;
-                case TradeRuleAggregation.Rule:
-                    if (!TradeRuleAggregations.TryAdd(rule, amount))
-                        TradeRuleAggregations[rule] += amount;
-                    break;
-                default:
-                    throw new ArgumentOutOfRangeException();
-            }
-        }
-
-        private static readonly string 
-            spent = "MGAutoSell.Spent".Translate(), 
-            earned = "MGAutoSell.Earned".Translate(),
-            bought = "MGAutoSell.Bought".Translate(),
-            sold = "MGAutoSell.Sold".Translate();
+        /// <summary>
+        /// Dispatches an in-game notification letter summarizing items bought, items sold, and net silver transferred.
+        /// </summary>
+        /// <param name="trader">The trader involved in the transaction.</param>
+        /// <param name="pawn">The colonist negotiator who completed the trade.</param>
+        /// <param name="deal">The executed <see cref="TradeDeal"/>.</param>
+        /// <param name="location">The map cell location for the letter target.</param>
+        /// <param name="buy">List of purchased item labels and quantities.</param>
+        /// <param name="sell">List of sold item labels and quantities.</param>
+        /// <param name="silver">Net currency transfer count.</param>
         public static void DoLetter(
             ITrader trader,
             Pawn pawn,
@@ -537,44 +797,52 @@ namespace MGAutoSell
             List<(string label, int count)> sell,
             int silver)
         {
-            if (!buy.Any() && !sell.Any())
+            if (buy.Count == 0 && sell.Count == 0)
+            {
                 return;
+            }
 
-            var word = silver > 0 ? earned : spent;
+            string word = silver > 0 ? Earned : Spent;
             float absSilver = Math.Abs(silver);
-            
 
-            var buyStringBuilder = new StringBuilder();
-            buyStringBuilder.AppendLine(bought.Colorize(ColoredText.TipSectionTitleColor));
-            buyStringBuilder.AppendJoin("\n", buy.Select(x => $"  {x.label} x{Math.Abs(x.count)}"));
+            string buySection = string.Empty;
+            if (buy.Count > 0)
+            {
+                var buyStringBuilder = new StringBuilder();
+                buyStringBuilder.AppendLine(Bought.Colorize(ColoredText.TipSectionTitleColor));
+                buyStringBuilder.AppendJoin("\n", buy.Select(static x => $"  {x.label} x{Math.Abs(x.count)}"));
+                buySection = buyStringBuilder.ToString();
+            }
 
-            var sellStringBuilder = new StringBuilder();
-            sellStringBuilder.AppendLine(sold.Colorize(ColoredText.TipSectionTitleColor));
-            sellStringBuilder.AppendJoin("\n", sell.Select(x => $"  {x.label} x{Math.Abs(x.count)}"));
+            string sellSection = string.Empty;
+            if (sell.Count > 0)
+            {
+                var sellStringBuilder = new StringBuilder();
+                sellStringBuilder.AppendLine(Sold.Colorize(ColoredText.TipSectionTitleColor));
+                sellStringBuilder.AppendJoin("\n", sell.Select(static x => $"  {x.label} x{Math.Abs(x.count)}"));
+                sellSection = sellStringBuilder.ToString();
+            }
 
-            var pawnName = pawn.Name.ToStringShort.Colorize(ColoredText.NameColor);
-            var traderColor = (trader.Faction?.PlayerRelationKind ?? FactionRelationKind.Neutral).GetColor();
-            var traderName = trader?.TraderName?.Colorize(traderColor) ?? "someone".Colorize(Color.magenta);
-            var silverLabel = absSilver.ToStringMoney().Colorize(ColoredText.CurrencyColor);
-            var buySection = buy.Any()
-                ? buyStringBuilder.ToString()
-                : string.Empty;
-            var sellSection = sell.Any() ? sellStringBuilder.ToString() : string.Empty;
-
+            string pawnName = pawn.Name.ToStringShort.Colorize(ColoredText.NameColor);
+            var traderColor = (trader?.Faction?.PlayerRelationKind ?? FactionRelationKind.Neutral).GetColor();
+            string traderName = trader?.TraderName?.Colorize(traderColor) ?? "someone".Colorize(Color.magenta);
+            string silverLabel = absSilver.ToStringMoney().Colorize(ColoredText.CurrencyColor);
 
             var body = "MGAutoSell.Letter".Translate(
                 pawnName,
-                traderName, 
+                traderName,
                 silverLabel,
-                word, 
-                buySection, 
-                sellSection
-                );
+                word,
+                buySection,
+                sellSection);
 
             var globalTargetInfo = new GlobalTargetInfo(location, pawn.Map);
-            
-            Find.LetterStack.ReceiveLetter("MGAutoSell.LetterTitle".Translate(traderName), body,
-                LetterDefOf.PositiveEvent, globalTargetInfo);
+
+            Find.LetterStack.ReceiveLetter(
+                "MGAutoSell.LetterTitle".Translate(traderName),
+                body,
+                LetterDefOf.PositiveEvent,
+                globalTargetInfo);
         }
     }
 }

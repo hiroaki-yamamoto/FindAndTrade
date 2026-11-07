@@ -1,24 +1,19 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using RimWorld;
 using TD_Find_Lib;
 using Verse;
 
 namespace MGAutoSell.Query
 {
+    /// <summary>
+    /// Trade query filter that matches when the active trader is an orbital trade ship (<see cref="TraderKindDef.orbital"/>).
+    /// </summary>
     internal class TradeQueryTraderOrbital : ThingQuery, ITradeQuery
     {
-        public override bool AppliesDirectlyTo(Thing thing)
-        {
-            return true;
-        }
+        /// <inheritdoc />
+        public override bool AppliesDirectlyTo(Thing thing) => true;
 
-        public bool AppliesDirectlyTo(TradeContext context)
-        {
-            return TradeSession.trader.TraderKind.orbital;
-        }
+        /// <inheritdoc />
+        public bool AppliesDirectlyTo(TradeContext context) =>
+            TradeSession.trader?.TraderKind is { orbital: true };
     }
 }

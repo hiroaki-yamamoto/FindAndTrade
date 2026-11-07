@@ -1,20 +1,30 @@
-﻿using MGAutoSell.Filter;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+using JetBrains.Annotations;
+using MGAutoSell.Filter;
+using MGAutoSell.Processing;
+using MGAutoSell.Records;
 using RimWorld;
 using TD_Find_Lib;
-using Verse;
-using System.Diagnostics;
-using System.Threading;
-using JetBrains.Annotations;
-using MGAutoSell.Records;
 using UnityEngine;
+using Verse;
 
 namespace MGAutoSell
 {
+    /// <summary>
+    /// Stores execution duration measurements for each phase of the map trade cache pipeline.
+    /// </summary>
+    /// <param name="AllItems">Time spent scanning the map for haulable items and sellable colony pawns.</param>
+    /// <param name="Junk">Time spent partitioning items designated as junk.</param>
+    /// <param name="Sell">Time spent matching map items against active trade rules.</param>
+    /// <param name="Traders">Time spent discovering and filtering available colony negotiators.</param>
+    /// <param name="SellEntries">Time spent calculating sell prices and quantities per <see cref="ThingDef"/>.</param>
+    /// <param name="PossibleItems">Time spent resolving potential buyable <see cref="ThingDef"/> entries.</param>
+    /// <param name="Quantity">Time spent aggregating item counts per rule.</param>
+    /// <param name="BuildCache">Time spent assembling the final <see cref="ItemsToSell"/> record.</param>
+    /// <param name="Total">Total cumulative execution time across all phases.</param>
     public record BenchmarkResults(
         ItemAndLabel<long> AllItems,
         ItemAndLabel<long> Junk,
@@ -25,179 +35,525 @@ namespace MGAutoSell
         ItemAndLabel<long> Quantity,
         ItemAndLabel<long> BuildCache,
         ItemAndLabel<long> Total);
+
+    /// <summary>
+    /// Provides high-performance map item scanning, rule matching, sell valuation, and cache construction.
+    /// </summary>
     public static class CacheUtility
     {
         internal static List<Thing> itemCache;
-        
+
+        /// <summary>
+        /// Gets or sets the <see cref="ITradeOrderCalculator"/> used to compute sell valuations and rule count ranges.
+        /// </summary>
+        public static ITradeOrderCalculator OrderCalculator { get; set; } = TradeOrderCalculator.Instance;
+
+        /// <summary>
+        /// Extracts all items designated with <see cref="MGDesignatorDefOf.MGAutoSell"/> from <paramref name="allItems"/>
+        /// in a single O(N) pass and groups them by <see cref="Thing.def"/>.
+        /// </summary>
+        /// <remarks>
+        /// Time Complexity: O(N + D) where N is the number of items in <paramref name="allItems"/> and D is the number
+        /// of active junk designations on the map. Uses two-pointer in-place list compaction instead of repeated
+        /// <see cref="List{T}.Remove"/> calls (which previously caused O(N * J) quadratic complexity).
+        /// Space Complexity: O(J) where J is the number of junk items.
+        /// </remarks>
+        /// <param name="allItems">The list of map items to partition in-place.</param>
+        /// <returns>A list of groupings of junk items keyed by <see cref="ThingDef"/>.</returns>
         public static List<IGrouping<ThingDef, Thing>> GetJunk(this List<Thing> allItems)
         {
-            var junk = allItems
-                .Where(x => x.Map?.designationManager?.DesignationOn(x, MGDesignatorDefOf.MGAutoSell) != null).ToList();
-            junk.ForEach(x => allItems.Remove(x));
-            var junkGrouped = junk.GroupBy(x => x.def).ToList();
-            return junkGrouped;
+            if (allItems == null || allItems.Count == 0)
+            {
+                return [];
+            }
+
+            var junkItems = ExtractJunkItemsInPlace(allItems);
+            return junkItems.Count == 0 ? [] : junkItems.GroupBy(static x => x.def).ToList();
         }
 
-        public static Dictionary<ThingDef, int> DoRules(this List<Thing> allItems, TradeRulesGroup rules, ref Dictionary<ThingDef, List<Thing>> thingDictionary, ref Dictionary<TradeRule, List<Thing>> ruleDictionary)
+        /// <summary>
+        /// Extracts all junk-designated items from <paramref name="allItems"/> in-place and adds them directly into
+        /// <paramref name="thingDictionary"/> without intermediate LINQ grouping allocations.
+        /// </summary>
+        /// <remarks>
+        /// Time Complexity: O(N + D) single pass. Space Complexity: O(J) for stored item references.
+        /// </remarks>
+        /// <param name="allItems">The list of map items to compact in-place.</param>
+        /// <param name="thingDictionary">The destination dictionary mapping each <see cref="ThingDef"/> to its sellable items.</param>
+        public static void ExtractJunkInto(this List<Thing> allItems, Dictionary<ThingDef, List<Thing>> thingDictionary)
+        {
+            if (allItems == null || allItems.Count == 0 || thingDictionary == null)
+            {
+                return;
+            }
+
+            var designatedSet = BuildJunkDesignationSet(allItems);
+            int writeIndex = 0;
+            for (int readIndex = 0; readIndex < allItems.Count; readIndex++)
+            {
+                var item = allItems[readIndex];
+                if (IsDesignatedJunk(item, designatedSet))
+                {
+                    if (!thingDictionary.TryGetValue(item.def, out var list))
+                    {
+                        list = [];
+                        thingDictionary[item.def] = list;
+                    }
+
+                    list.Add(item);
+                }
+                else
+                {
+                    allItems[writeIndex++] = item;
+                }
+            }
+
+            if (writeIndex < allItems.Count)
+            {
+                allItems.RemoveRange(writeIndex, allItems.Count - writeIndex);
+            }
+        }
+
+        /// <summary>
+        /// Evaluates enabled <paramref name="rules"/> against <paramref name="allItems"/>, populating matched items
+        /// per rule and aggregating sellable items by <see cref="ThingDef"/>.
+        /// </summary>
+        /// <remarks>
+        /// Time Complexity: O(R * N) where R is the number of active rules and N is the number of items in <paramref name="allItems"/>.
+        /// Uses in-place two-pointer list compaction instead of repeated <see cref="List{T}.Remove"/> calls (previously O(R * N^2)),
+        /// and inserts directly into <paramref name="thingDictionary"/> without intermediate <c>GroupBy</c> or <c>ToDictionary</c> allocations.
+        /// Space Complexity: O(M) where M is the number of matched items.
+        /// </remarks>
+        /// <param name="allItems">The list of map items to evaluate and compact in-place as sell rules claim items.</param>
+        /// <param name="rules">The trade rules group to evaluate in priority order.</param>
+        /// <param name="thingDictionary">Dictionary accumulating sellable items grouped by <see cref="ThingDef"/>.</param>
+        /// <param name="ruleDictionary">Dictionary accumulating all matched items per <see cref="TradeRule"/>.</param>
+        /// <returns>A dictionary mapping each claimed <see cref="ThingDef"/> to its export threshold.</returns>
+        public static Dictionary<ThingDef, int> DoRules(
+            this List<Thing> allItems,
+            TradeRulesGroup rules,
+            ref Dictionary<ThingDef, List<Thing>> thingDictionary,
+            ref Dictionary<TradeRule, List<Thing>> ruleDictionary)
+        {
+            return DoRules(allItems, (IEnumerable<TradeRule>)rules, ref thingDictionary, ref ruleDictionary);
+        }
+
+        /// <summary>
+        /// Evaluates enabled <paramref name="rules"/> against <paramref name="allItems"/>, populating matched items
+        /// per rule and aggregating sellable items by <see cref="ThingDef"/>.
+        /// </summary>
+        /// <param name="allItems">The list of map items to evaluate and compact in-place as sell rules claim items.</param>
+        /// <param name="rules">The sequence of trade rules to evaluate in priority order.</param>
+        /// <param name="thingDictionary">Dictionary accumulating sellable items grouped by <see cref="ThingDef"/>.</param>
+        /// <param name="ruleDictionary">Dictionary accumulating all matched items per <see cref="TradeRule"/>.</param>
+        /// <returns>A dictionary mapping each claimed <see cref="ThingDef"/> to its export threshold.</returns>
+        public static Dictionary<ThingDef, int> DoRules(
+            this List<Thing> allItems,
+            IEnumerable<TradeRule> rules,
+            ref Dictionary<ThingDef, List<Thing>> thingDictionary,
+            ref Dictionary<TradeRule, List<Thing>> ruleDictionary)
         {
             var sellDictionary = new Dictionary<ThingDef, int>();
-
-            foreach (var rule in rules.Where(x =>
-                         x is { Enabled: true } && x.search.Children.queries.Any()))
+            if (allItems == null || allItems.Count == 0 || rules == null)
             {
-                var items = allItems.Where(x => rule.search.AppliesTo(x)).ToList();
-                if (items.Any())
-                    ruleDictionary[rule] = items.ToList();
+                return sellDictionary;
+            }
 
-                if(!rule.AllowSell)
-                    continue;
-
-                items.RemoveAll(x => !TradeUtility.EverPlayerSellable(x.def));
-
-                items.ForEach(x => { allItems.Remove(x); });
-
-                var itemsGrouped = items
-                    .GroupBy(x => x.def).ToList();
-
-                foreach (var (thingDef, list) in itemsGrouped.ToDictionary(x => x.Key, x => x.ToList()))
+            foreach (var rule in rules)
+            {
+                if (rule is not { Enabled: true } || rule.search?.Children?.queries == null || rule.search.Children.queries.Count == 0)
                 {
-                    if (!thingDictionary.TryAdd(thingDef, list))
-                        thingDictionary[thingDef].AddRange(list);
+                    continue;
+                }
 
-                    sellDictionary.TryAdd(thingDef, rule.Export);
+                List<Thing> matchedForRule = null;
+                bool allowSell = rule.AllowSell;
+                int writeIndex = 0;
+
+                for (int readIndex = 0; readIndex < allItems.Count; readIndex++)
+                {
+                    var item = allItems[readIndex];
+                    if (!rule.search.AppliesTo(item))
+                    {
+                        if (allowSell)
+                        {
+                            allItems[writeIndex++] = item;
+                        }
+
+                        continue;
+                    }
+
+                    matchedForRule ??= [];
+                    matchedForRule.Add(item);
+
+                    if (!allowSell)
+                    {
+                        continue;
+                    }
+
+                    if (!TradeUtility.EverPlayerSellable(item.def))
+                    {
+                        // Non-sellable items remain in allItems and are excluded from the rule's sell list.
+                        matchedForRule.RemoveAt(matchedForRule.Count - 1);
+                        allItems[writeIndex++] = item;
+                        continue;
+                    }
+
+                    if (!thingDictionary.TryGetValue(item.def, out var defItems))
+                    {
+                        defItems = [];
+                        thingDictionary[item.def] = defItems;
+                    }
+
+                    defItems.Add(item);
+                    sellDictionary.TryAdd(item.def, rule.Export);
+                }
+
+                if (matchedForRule is { Count: > 0 })
+                {
+                    ruleDictionary[rule] = matchedForRule;
+                }
+
+                if (allowSell && writeIndex < allItems.Count)
+                {
+                    allItems.RemoveRange(writeIndex, allItems.Count - writeIndex);
                 }
             }
 
             return sellDictionary;
         }
 
-        public static List<SellRecord> GetEntries(this Dictionary<ThingDef, int> sellDictionary, Pawn socialPawn, ref Dictionary<ThingDef, List<Thing>> thingDictionary)
+        /// <summary>
+        /// Computes the sorted list of <see cref="SellRecord"/> entries from the aggregated <paramref name="thingDictionary"/>
+        /// and <paramref name="sellDictionary"/> thresholds.
+        /// </summary>
+        /// <remarks>
+        /// Time Complexity: O(N + K log K) where N is the total number of sellable item stacks and K is the number of
+        /// distinct <see cref="ThingDef"/> keys. Sums price and stack counts in a single pass per <see cref="ThingDef"/>
+        /// and sorts the resulting list in-place.
+        /// Space Complexity: O(K) for the output list.
+        /// </remarks>
+        /// <param name="sellDictionary">Mapping of <see cref="ThingDef"/> to export retention threshold.</param>
+        /// <param name="socialPawn">The negotiator pawn used to compute trade price improvements, or <c>null</c>.</param>
+        /// <param name="thingDictionary">Dictionary of items grouped by <see cref="ThingDef"/>.</param>
+        /// <returns>A list of <see cref="SellRecord"/> sorted by descending total value.</returns>
+        public static List<SellRecord> GetEntries(
+            this Dictionary<ThingDef, int> sellDictionary,
+            Pawn socialPawn,
+            ref Dictionary<ThingDef, List<Thing>> thingDictionary)
         {
-            var traderPriceType = PriceType.Normal.PriceMultiplier();
-            var playerNegotiator = socialPawn?.GetStatValue(StatDefOf.TradePriceImprovement) ?? 0.1f;
-            var settlement = 0f;
-            var drugBonusRaw = socialPawn?.GetStatValue(StatDefOf.DrugSellPriceImprovement) ?? 0f;
-            var animalProduceBonusRaw = ModsConfig.IdeologyActive && socialPawn != null
+            if (thingDictionary == null || thingDictionary.Count == 0)
+            {
+                return [];
+            }
+
+            float traderPriceType = PriceType.Normal.PriceMultiplier();
+            float playerNegotiator = socialPawn?.GetStatValue(StatDefOf.TradePriceImprovement) ?? 0.1f;
+            const float settlement = 0f;
+            float drugBonusRaw = socialPawn?.GetStatValue(StatDefOf.DrugSellPriceImprovement) ?? 0f;
+            bool ideologyActive = ModsConfig.IdeologyActive;
+            float animalProduceBonusRaw = ideologyActive && socialPawn != null
                 ? socialPawn.GetStatValue(StatDefOf.AnimalProductsSellImprovement)
                 : 0f;
-            thingDictionary.RemoveAll(x => !x.Value.Any());
-            var sellEntries = thingDictionary.Select(x =>
+
+            var sellEntries = new List<SellRecord>(thingDictionary.Count);
+            var emptyKeys = new List<ThingDef>();
+
+            foreach (var (thingDef, items) in thingDictionary)
+            {
+                if (items == null || items.Count == 0)
                 {
-                    var (thingDef, items) = x;
-                    var drugBonus = thingDef.IsNonMedicalDrug ? drugBonusRaw : 0f;
-                    var animalProduceBonus = (thingDef.IsLeather || thingDef.IsMeat || thingDef.IsWool)
-                        ? animalProduceBonusRaw
-                        : 0f;
-                    var humanPawn = ModsConfig.IdeologyActive && items.FirstOrDefault() is Pawn pawn &&
-                                    pawn.RaceProps.Humanlike
-                        ? 0.6f
-                        : 1f;
-                    var priceTotal = items.Select(y => TradeUtility.GetPricePlayerSell(y, traderPriceType, humanPawn,
-                        playerNegotiator, settlement, drugBonus, animalProduceBonus) * y.stackCount).Sum();
-                    var itemsTotal = items.Sum(x => x.stackCount);
-                    var pricePer = priceTotal / itemsTotal;
-                    var sellDown = sellDictionary.TryGetValue(thingDef);
+                    emptyKeys.Add(thingDef);
+                    continue;
+                }
 
-                    if (itemsTotal <= sellDown)
-                        return null;
+                float drugBonus = thingDef.IsNonMedicalDrug ? drugBonusRaw : 0f;
+                float animalProduceBonus = (thingDef.IsLeather || thingDef.IsMeat || thingDef.IsWool)
+                    ? animalProduceBonusRaw
+                    : 0f;
+                float humanPawn = ideologyActive && items[0] is Pawn pawn && pawn.RaceProps.Humanlike
+                    ? 0.6f
+                    : 1f;
 
-                    priceTotal -= pricePer * sellDown;
-                    itemsTotal -= sellDown;
-                    priceTotal = (float)Math.Round(priceTotal, 0);
-                    
+                float priceTotal = 0f;
+                int itemsTotal = 0;
+                for (int i = 0; i < items.Count; i++)
+                {
+                    var item = items[i];
+                    int stackCount = item.stackCount;
+                    priceTotal += TradeUtility.GetPricePlayerSell(
+                        item,
+                        traderPriceType,
+                        humanPawn,
+                        playerNegotiator,
+                        settlement,
+                        drugBonus,
+                        animalProduceBonus) * stackCount;
+                    itemsTotal += stackCount;
+                }
 
-                    var total = new ItemAndLabel<float>(priceTotal, priceTotal.ToStringMoney());
-                    var pricePerItem = new ItemAndLabel<float>((priceTotal / itemsTotal),
-                        (priceTotal / itemsTotal).ToStringMoney());
+                int sellDown = sellDictionary != null && sellDictionary.TryGetValue(thingDef, out int exportLimit)
+                    ? exportLimit
+                    : 0;
 
+                if (!OrderCalculator.TryCalculateSellValuation(
+                        priceTotal,
+                        itemsTotal,
+                        sellDown,
+                        out int sellableCount,
+                        out float roundedTotal,
+                        out float unitPrice))
+                {
+                    continue;
+                }
 
-                    return new SellRecord(thingDef, itemsTotal, total, pricePerItem);
-                })
-                .Where(x => x != null)
-                .OrderByDescending(x => x.Total.Value)
-                .ToList();
+                var total = new ItemAndLabel<float>(roundedTotal, roundedTotal.ToStringMoney());
+                var pricePerItem = new ItemAndLabel<float>(unitPrice, unitPrice.ToStringMoney());
+                sellEntries.Add(new SellRecord(thingDef, sellableCount, total, pricePerItem));
+            }
+
+            for (int i = 0; i < emptyKeys.Count; i++)
+            {
+                thingDictionary.Remove(emptyKeys[i]);
+            }
+
+            sellEntries.Sort(static (a, b) => b.Total.Value.CompareTo(a.Total.Value));
             return sellEntries;
         }
 
+        /// <summary>
+        /// Computes rule usage statistics (grouped counts and min/max ranges) for each rule in <paramref name="ruleDictionary"/>.
+        /// </summary>
+        /// <remarks>
+        /// Time Complexity: O(M) single pass across all matched items M, avoiding intermediate <c>ToList()</c> per group
+        /// and avoiding post-construction removal of empty rules.
+        /// Space Complexity: O(R + G) where R is active rules and G is distinct <see cref="ThingDef"/> groups per rule.
+        /// </remarks>
+        /// <param name="ruleDictionary">Dictionary mapping each <see cref="TradeRule"/> to its matched map items.</param>
+        /// <returns>A dictionary mapping each non-empty <see cref="TradeRule"/> to its <see cref="RuleUsage"/> summary.</returns>
         public static Dictionary<TradeRule, RuleUsage> GetRuleCounts(
             this Dictionary<TradeRule, List<Thing>> ruleDictionary)
         {
-            if (!Mod.Settings.showQuantityInsteadOfLabel && !Mod.Settings.colorRuleCountsOnWork)
+            if (ruleDictionary == null || ruleDictionary.Count == 0)
+            {
                 return [];
+            }
 
-            return ruleDictionary.ToDictionary(x => x.Key,
-                    x =>
+            if (Mod.Settings is { showQuantityInsteadOfLabel: false, colorRuleCountsOnWork: false })
+            {
+                return [];
+            }
+
+            var result = new Dictionary<TradeRule, RuleUsage>(ruleDictionary.Count);
+            var countsByDef = new Dictionary<ThingDef, int>();
+
+            foreach (var (rule, items) in ruleDictionary)
+            {
+                if (items == null || items.Count == 0)
+                {
+                    continue;
+                }
+
+                countsByDef.Clear();
+                int totalCount = 0;
+
+                for (int i = 0; i < items.Count; i++)
+                {
+                    var item = items[i];
+                    int stackCount = item.stackCount;
+                    totalCount += stackCount;
+
+                    if (countsByDef.TryGetValue(item.def, out int existing))
                     {
-                        var grouped = x.Value.GroupBy(y => y.def)
-                            .Select(y => new RuleRecord(y.Key, y.ToList().Sum(z => z.stackCount))).ToList();
-                        var max = x.Key.Aggregation == TradeRuleAggregation.ThingDef
-                            ? grouped
-                                .Max(x => x.Count)
-                            : x.Value.Sum(y => y.stackCount);
+                        countsByDef[item.def] = existing + stackCount;
+                    }
+                    else
+                    {
+                        countsByDef[item.def] = stackCount;
+                    }
+                }
 
-                        var min = x.Key.Aggregation == TradeRuleAggregation.Rule 
-                            ? max
-                            : grouped.Min(x => x.Count);
+                if (totalCount <= 0)
+                {
+                    continue;
+                }
 
-                        var range = (new ItemAndLabel<int>(min, "x" + min), new ItemAndLabel<int>(max, "x" + max));
-                        var ruleUsage = new RuleUsage(grouped, range);
-                        return ruleUsage;
-                    });
+                var grouped = new List<RuleRecord>(countsByDef.Count);
+                foreach (var (def, count) in countsByDef)
+                {
+                    grouped.Add(new RuleRecord(def, count));
+                }
+
+                var (min, max) = OrderCalculator.CalculateRuleRange(rule.Aggregation, grouped, totalCount);
+                if (max <= 0)
+                {
+                    continue;
+                }
+
+                var range = (new ItemAndLabel<int>(min, "x" + min), new ItemAndLabel<int>(max, "x" + max));
+                result[rule] = new RuleUsage(grouped, range);
+            }
+
+            return result;
         }
 
+        /// <summary>
+        /// Resolves the list of potential items matched by buy-enabled rules that are not already present in <paramref name="sellEntries"/>.
+        /// </summary>
+        /// <remarks>
+        /// Time Complexity: O(P + S) where P is the total number of potential items across rules and S is the number
+        /// of entries in <paramref name="sellEntries"/>. Uses a <see cref="HashSet{T}"/> of sold <see cref="ThingDef"/>s
+        /// instead of an O(P * S) nested <c>RemoveAll(x =&gt; sellEntries.Any(...))</c> scan.
+        /// Space Complexity: O(P + S).
+        /// </remarks>
+        /// <param name="rules">The list of configured trade rules.</param>
+        /// <param name="sellEntries">The list of items already queued for sale.</param>
+        /// <returns>A deduplicated list of <see cref="PotentialItem"/> entries.</returns>
         public static List<PotentialItem> GetPossibleItemsList(this List<TradeRule> rules, List<SellRecord> sellEntries)
         {
-            if (!Mod.Settings.showAllMatchingItems)
+            if (rules == null || rules.Count == 0 || Mod.Settings is { showAllMatchingItems: false })
+            {
                 return [];
+            }
 
             itemCache ??= GenerateItemCache();
-            var potentialItems = rules.Where(x => x.Enabled && x.AllowBuy)
-                .SelectMany(x => (x.search.AllItems ??= x.search.GetPossibleItems()).Select(y => new PotentialItem(y, $"<i>({x.search.name})</i>")))
-                .Distinct()
-                .ToList();
-            potentialItems.RemoveAll(x => sellEntries.Any(y => y.Item == x.Item));
+
+            var soldDefs = new HashSet<ThingDef>(sellEntries?.Count ?? 0);
+            if (sellEntries != null)
+            {
+                for (int i = 0; i < sellEntries.Count; i++)
+                {
+                    soldDefs.Add(sellEntries[i].Item);
+                }
+            }
+
+            var seen = new HashSet<PotentialItem>();
+            var potentialItems = new List<PotentialItem>();
+
+            for (int i = 0; i < rules.Count; i++)
+            {
+                var rule = rules[i];
+                if (rule is not { Enabled: true, AllowBuy: true } || rule.search == null)
+                {
+                    continue;
+                }
+
+                var possibleDefs = rule.search.AllItems ??= rule.search.GetPossibleItems();
+                if (possibleDefs.Count == 0)
+                {
+                    continue;
+                }
+
+                string formattedRuleName = $"<i>({rule.search.name})</i>";
+                for (int j = 0; j < possibleDefs.Count; j++)
+                {
+                    var def = possibleDefs[j];
+                    if (soldDefs.Contains(def))
+                    {
+                        continue;
+                    }
+
+                    var candidate = new PotentialItem(def, formattedRuleName);
+                    if (seen.Add(candidate))
+                    {
+                        potentialItems.Add(candidate);
+                    }
+                }
+            }
+
             return potentialItems;
         }
 
+        /// <summary>
+        /// Evaluates all cached tradeable <see cref="Thing"/> prototypes against <paramref name="search"/> to determine
+        /// which <see cref="ThingDef"/>s can match the query.
+        /// </summary>
+        /// <remarks>
+        /// Time Complexity: O(C) single pass over <see cref="itemCache"/> with in-place compaction when faulty items are removed.
+        /// Space Complexity: O(M) where M is the number of matching <see cref="ThingDef"/>s.
+        /// </remarks>
+        /// <param name="search">The query search filter to evaluate.</param>
+        /// <returns>A list of matching <see cref="ThingDef"/> definitions.</returns>
         public static List<ThingDef> GetPossibleItems(this QuerySearch search)
         {
-            itemCache ??= GenerateItemCache(); 
+            itemCache ??= GenerateItemCache();
 
-            if (!search.Children.queries.Any(x => x.Enabled))
-                return [];
-
-            var removals = new List<Thing>();
-            var possibleItems = itemCache.Where(x =>
+            if (search?.Children?.queries == null || !search.Children.queries.Any(static x => x.Enabled))
             {
+                return [];
+            }
+
+            var possibleItems = new List<ThingDef>();
+            int writeIndex = 0;
+
+            for (int readIndex = 0; readIndex < itemCache.Count; readIndex++)
+            {
+                var candidate = itemCache[readIndex];
                 try
                 {
-                    return search.AppliesTo(x);
+                    if (search.AppliesTo(candidate))
+                    {
+                        possibleItems.Add(candidate.def);
+                    }
+
+                    itemCache[writeIndex++] = candidate;
                 }
                 catch
                 {
-                    removals.Add(x);
-                    return false;
+                    Log.Warning(
+                        $"An error occured while matching ThingDef {candidate.def.defName} for a rule, removing it from the list.\nIt's possible this item has a complex creation process, hence the error.");
                 }
-            }).Select(x => x.def).ToList();
+            }
 
-            foreach (var removal in removals)
+            if (writeIndex < itemCache.Count)
             {
-                Log.Warning($"An error occured while matching ThingDef {removal.def.defName} for a rule, removing it from the list.\nIt's possible this item has a complex creation process, hence the error.");
-                itemCache.Remove(removal);
+                itemCache.RemoveRange(writeIndex, itemCache.Count - writeIndex);
             }
 
             return possibleItems;
         }
 
+        /// <summary>
+        /// Generates a prototype <see cref="Thing"/> instance for every tradeable <see cref="ThingDef"/> with a valid UI icon.
+        /// </summary>
+        /// <returns>A list of prototype <see cref="Thing"/> instances used for query evaluation.</returns>
         public static List<Thing> GenerateItemCache()
         {
             var traders = DefDatabase<TraderKindDef>.AllDefsListForReading;
+            var allDefs = DefDatabase<ThingDef>.AllDefsListForReading;
+            var result = new List<Thing>();
 
-            return DefDatabase<ThingDef>.AllDefsListForReading
-                .Where(x => traders.Any(trader => trader.WillTrade(x)) && x.uiIcon != null)
-                .Select(y => y.race != null ? TryGenPawn(y) : TryGenThing(y))
-                .Where(x => x != null)
-                .ToList();
+            for (int i = 0; i < allDefs.Count; i++)
+            {
+                var def = allDefs[i];
+                if (def.uiIcon == null)
+                {
+                    continue;
+                }
+
+                bool anyTraderWillTrade = false;
+                for (int t = 0; t < traders.Count; t++)
+                {
+                    if (traders[t].WillTrade(def))
+                    {
+                        anyTraderWillTrade = true;
+                        break;
+                    }
+                }
+
+                if (!anyTraderWillTrade)
+                {
+                    continue;
+                }
+
+                var instance = def.race != null ? TryGenPawn(def) : TryGenThing(def);
+                if (instance != null)
+                {
+                    result.Add(instance);
+                }
+            }
+
+            return result;
         }
 
         [CanBeNull]
@@ -205,7 +561,11 @@ namespace MGAutoSell
         {
             try
             {
-                if (thing.race?.AnyPawnKind == null) return null;
+                if (thing.race?.AnyPawnKind == null)
+                {
+                    return null;
+                }
+
                 return PawnGenerator.GeneratePawn(thing.race.AnyPawnKind);
             }
             catch (Exception ex)
@@ -229,87 +589,169 @@ namespace MGAutoSell
             }
         }
 
-        public static ItemsToSell Cache(TradeRulesGameComp comp, Map map, out BenchmarkResults benchmark, Pawn SellerOverride = null, bool withBenchmark = false)
+        /// <summary>
+        /// Builds the complete <see cref="ItemsToSell"/> cache for the specified <paramref name="map"/> and
+        /// optionally records per-stage benchmark timings.
+        /// </summary>
+        /// <param name="comp">The game component holding the configured trade rules and trader settings.</param>
+        /// <param name="map">The map whose inventory should be scanned.</param>
+        /// <param name="benchmark">When this method returns, contains the recorded benchmark timings.</param>
+        /// <param name="SellerOverride">An optional pawn overriding automatic negotiator selection.</param>
+        /// <param name="withBenchmark">Whether to reset rule caches and record detailed benchmark timestamps.</param>
+        /// <returns>The constructed <see cref="ItemsToSell"/> snapshot for <paramref name="map"/>.</returns>
+        public static ItemsToSell Cache(
+            TradeRulesGameComp comp,
+            Map map,
+            out BenchmarkResults benchmark,
+            Pawn SellerOverride = null,
+            bool withBenchmark = false)
         {
-            long benchmarkAllItems = 0, benchmarkJunk = 0, benchmarkSell = 0, benchmarkTraders = 0, benchmarkSellEntries = 0, benchmarkPossibleItems = 0, benchmarkSilver = 0, benchmarkQuantity = 0, benchmarkBuildCache = 0;
+            long benchmarkAllItems = 0,
+                benchmarkJunk = 0,
+                benchmarkSell = 0,
+                benchmarkTraders = 0,
+                benchmarkSellEntries = 0,
+                benchmarkPossibleItems = 0,
+                benchmarkSilver = 0,
+                benchmarkQuantity = 0,
+                benchmarkBuildCache = 0;
 
-            if(withBenchmark)
+            if (withBenchmark)
             {
-                comp.tradeRules.ForEach(x => x.search.AllItems = null);
+                comp.tradeRules.ForEach(static x => x.search.AllItems = null);
                 itemCache ??= GenerateItemCache();
             }
 
-            var timestamp = Stopwatch.GetTimestamp();
-            //var allItems = TradeUtility.AllLaunchableThingsForTrade(Find.CurrentMap).ToList();
-            var allItems = map.listerThings.ThingsInGroup(ThingRequestGroup.HaulableEver).Where(x =>
-                (!x.IsForbidden(Faction.OfPlayer) || x.Map.zoneManager.ZoneAt(x.Position) != null) &&
-                !x.Position.Fogged(x.Map))
-                .ToList();
-            allItems.AddRange(
-                TradeUtility.AllSellableColonyPawns(map, false)
-                .Where(x => x?.Map != null)
-                .ToList());
+            long timestamp = Stopwatch.GetTimestamp();
+
+            var haulables = map.listerThings.ThingsInGroup(ThingRequestGroup.HaulableEver);
+            var allItems = new List<Thing>(haulables.Count);
+            var playerFaction = Faction.OfPlayer;
+            var zoneManager = map.zoneManager;
+            var fogGrid = map.fogGrid;
+
+            for (int i = 0; i < haulables.Count; i++)
+            {
+                var item = haulables[i];
+                if (item == null)
+                {
+                    continue;
+                }
+
+                var pos = item.Position;
+                if ((!item.IsForbidden(playerFaction) || zoneManager.ZoneAt(pos) != null) &&
+                    (fogGrid == null || !fogGrid.IsFogged(pos)))
+                {
+                    allItems.Add(item);
+                }
+            }
+
+            foreach (var pawn in TradeUtility.AllSellableColonyPawns(map, false))
+            {
+                if (pawn?.Map != null)
+                {
+                    allItems.Add(pawn);
+                }
+            }
 
             if (withBenchmark)
+            {
                 RecordTime(ref timestamp, ref benchmarkAllItems);
+            }
 
             var thingDictionary = new Dictionary<ThingDef, List<Thing>>();
             var ruleDictionary = new Dictionary<TradeRule, List<Thing>>();
 
-            var junk = allItems.GetJunk();
-
-            thingDictionary.AddRange(junk.ToDictionary(x => x.Key,
-                x => x.ToList()));
+            allItems.ExtractJunkInto(thingDictionary);
 
             if (withBenchmark)
+            {
                 RecordTime(ref timestamp, ref benchmarkJunk);
+            }
 
             var sellDictionary = allItems.DoRules(comp.tradeRules, ref thingDictionary, ref ruleDictionary);
 
             if (withBenchmark)
+            {
                 RecordTime(ref timestamp, ref benchmarkSell);
+            }
 
             var traders = TabUtility.GetTraders(false);
-            if (comp.autoTrade)
+            if (comp.autoTrade && comp.autoTraderIDs.Count > 0)
             {
-                var allowedTraders = traders.Where(x => comp.autoTraderIDs.Contains(x.Pawn.thingIDNumber)).ToList();
-                if (allowedTraders.Any())
-                    traders = allowedTraders;
+                var allowedTraders = new List<TraderRecord>(traders.Count);
+                for (int i = 0; i < traders.Count; i++)
+                {
+                    var candidate = traders[i];
+                    if (comp.autoTraderIDs.Contains(candidate.Pawn.thingIDNumber))
+                    {
+                        allowedTraders.Add(candidate);
+                    }
+                }
 
+                if (allowedTraders.Count > 0)
+                {
+                    traders = allowedTraders;
+                }
             }
 
             if (withBenchmark)
+            {
                 RecordTime(ref timestamp, ref benchmarkTraders);
+            }
 
-            var socialPawn = SellerOverride ?? (traders.Any() ? traders.MaxBy(x => x.Improvement).Pawn : null);
-            var playerNegotiator = socialPawn?.GetStatValue(StatDefOf.TradePriceImprovement) ?? 0.1f;
-            var isLeader = ModsConfig.IdeologyActive && socialPawn == Faction.OfPlayer.leader;
+            Pawn socialPawn = SellerOverride ?? SelectBestNegotiator(traders);
+            float playerNegotiator = socialPawn?.GetStatValue(StatDefOf.TradePriceImprovement) ?? 0.1f;
+            bool isLeader = ModsConfig.IdeologyActive && socialPawn != null && socialPawn == Faction.OfPlayer.leader;
 
             var sellEntries = sellDictionary.GetEntries(socialPawn, ref thingDictionary);
 
             if (withBenchmark)
+            {
                 RecordTime(ref timestamp, ref benchmarkSellEntries);
+            }
 
             var potentialItems = comp.tradeRules.GetPossibleItemsList(sellEntries);
 
             if (withBenchmark)
+            {
                 RecordTime(ref timestamp, ref benchmarkPossibleItems);
+            }
 
-            var totalSilver = (float)Math.Round(sellEntries.Sum(x => x.Total.Value), 0);
+            float rawTotalSilver = 0f;
+            for (int i = 0; i < sellEntries.Count; i++)
+            {
+                rawTotalSilver += sellEntries[i].Total.Value;
+            }
 
-            if(withBenchmark)
+            float totalSilver = (float)Math.Round(rawTotalSilver, 0);
+
+            if (withBenchmark)
+            {
                 RecordTime(ref timestamp, ref benchmarkSilver);
+            }
 
             var ruleCounts = ruleDictionary.GetRuleCounts();
 
             if (withBenchmark)
+            {
                 RecordTime(ref timestamp, ref benchmarkQuantity);
+            }
 
-            var trader = new TraderRecord(socialPawn,
+            var trader = new TraderRecord(
+                socialPawn,
                 socialPawn?.LabelShort ?? "No trader",
-                () => socialPawn != null ? PortraitsCache.Get(socialPawn, new Vector2(24, 24), Rot4.South,
-                    ColonistBarColonistDrawer.PawnTextureCameraOffset, 1.28205f) : null,
-                playerNegotiator.ToStringPercent(), playerNegotiator, isLeader);
+                () => socialPawn != null
+                    ? PortraitsCache.Get(
+                        socialPawn,
+                        new Vector2(24, 24),
+                        Rot4.South,
+                        ColonistBarColonistDrawer.PawnTextureCameraOffset,
+                        1.28205f)
+                    : null,
+                playerNegotiator.ToStringPercent(),
+                playerNegotiator,
+                isLeader);
 
             var sellCache = new ItemsToSell(
                 Items: sellEntries,
@@ -317,27 +759,139 @@ namespace MGAutoSell
                 TotalSilver: new ItemAndLabel<float>(totalSilver, totalSilver.ToStringMoney()),
                 Trader: trader,
                 Rules: ruleCounts);
-            sellCache.Rules.RemoveAll(x => x.Value.Range.max.Value == 0);
 
             if (withBenchmark)
+            {
                 RecordTime(ref timestamp, ref benchmarkBuildCache);
+            }
 
-            ItemAndLabel<long> BM(long v) => new(v, TimeSpan.FromTicks(v).TotalMilliseconds + "ms");
+            static ItemAndLabel<long> BM(long v) => new(v, TimeSpan.FromTicks(v).TotalMilliseconds + "ms");
 
-            var total = benchmarkAllItems + benchmarkJunk + benchmarkSell + benchmarkTraders + benchmarkSellEntries +
-                        benchmarkPossibleItems + benchmarkQuantity + benchmarkBuildCache;
+            long total = benchmarkAllItems + benchmarkJunk + benchmarkSell + benchmarkTraders + benchmarkSellEntries +
+                         benchmarkPossibleItems + benchmarkQuantity + benchmarkBuildCache;
 
-            benchmark = new BenchmarkResults(BM(benchmarkAllItems), BM(benchmarkJunk), BM(benchmarkSell), BM(benchmarkTraders),
-                    BM(benchmarkSellEntries), BM(benchmarkPossibleItems), BM(benchmarkQuantity), BM(benchmarkBuildCache), BM(total));
+            benchmark = new BenchmarkResults(
+                BM(benchmarkAllItems),
+                BM(benchmarkJunk),
+                BM(benchmarkSell),
+                BM(benchmarkTraders),
+                BM(benchmarkSellEntries),
+                BM(benchmarkPossibleItems),
+                BM(benchmarkQuantity),
+                BM(benchmarkBuildCache),
+                BM(total));
 
             return sellCache;
         }
 
+        /// <summary>
+        /// Records the elapsed stopwatch ticks since <paramref name="startTime"/> into <paramref name="duration"/>
+        /// and advances <paramref name="startTime"/> to the current timestamp.
+        /// </summary>
+        /// <param name="startTime">Reference to the start timestamp, updated to the current timestamp on return.</param>
+        /// <param name="duration">Output parameter receiving the elapsed ticks.</param>
         public static void RecordTime(ref long startTime, ref long duration)
         {
-            var benchmarkNewTime = Stopwatch.GetTimestamp();
+            long benchmarkNewTime = Stopwatch.GetTimestamp();
             duration = benchmarkNewTime - startTime;
             startTime = benchmarkNewTime;
+        }
+
+        private static Pawn SelectBestNegotiator(List<TraderRecord> traders)
+        {
+            if (traders == null || traders.Count == 0)
+            {
+                return null;
+            }
+
+            var best = traders[0];
+            for (int i = 1; i < traders.Count; i++)
+            {
+                if (traders[i].Improvement > best.Improvement)
+                {
+                    best = traders[i];
+                }
+            }
+
+            return best.Pawn;
+        }
+
+        private static List<Thing> ExtractJunkItemsInPlace(List<Thing> allItems)
+        {
+            var designatedSet = BuildJunkDesignationSet(allItems);
+            var junk = new List<Thing>();
+            int writeIndex = 0;
+
+            for (int readIndex = 0; readIndex < allItems.Count; readIndex++)
+            {
+                var item = allItems[readIndex];
+                if (IsDesignatedJunk(item, designatedSet))
+                {
+                    junk.Add(item);
+                }
+                else
+                {
+                    allItems[writeIndex++] = item;
+                }
+            }
+
+            if (writeIndex < allItems.Count)
+            {
+                allItems.RemoveRange(writeIndex, allItems.Count - writeIndex);
+            }
+
+            return junk;
+        }
+
+        internal static HashSet<Thing> BuildJunkDesignationSet(IReadOnlyList<Thing> items)
+        {
+            var def = MGDesignatorDefOf.MGAutoSell;
+            if (def == null || items == null || items.Count == 0)
+            {
+                return null;
+            }
+
+            Map map = null;
+            for (int i = 0; i < items.Count; i++)
+            {
+                if (items[i]?.Map != null)
+                {
+                    map = items[i].Map;
+                    break;
+                }
+            }
+
+            var designations = map?.designationManager?.SpawnedDesignationsOfDef(def);
+            if (designations == null)
+            {
+                return null;
+            }
+
+            var set = new HashSet<Thing>();
+            foreach (var designation in designations)
+            {
+                if (designation.target.HasThing)
+                {
+                    set.Add(designation.target.Thing);
+                }
+            }
+
+            return set;
+        }
+
+        internal static bool IsDesignatedJunk(Thing item, HashSet<Thing> precomputedSet)
+        {
+            if (item == null)
+            {
+                return false;
+            }
+
+            if (precomputedSet != null)
+            {
+                return precomputedSet.Contains(item);
+            }
+
+            return item.Map?.designationManager?.DesignationOn(item, MGDesignatorDefOf.MGAutoSell) != null;
         }
     }
 }

@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+        <LangVersion>latest</LangVersion>
+        <IsPackable>false</IsPackable>
+        <IsTestProject>true</IsTestProject>
+        <AssemblyName>MGAutoSell.Tests</AssemblyName>
+        <RootNamespace>MGAutoSell.Tests</RootNamespace>
+        <Version>1.7</Version>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.10.0-preview-24080-01" />
+        <PackageReference Include="MSTest.TestAdapter" Version="3.1.1" />
+        <PackageReference Include="MSTest.TestFramework" Version="3.1.1" />
+        <PackageReference Include="Krafs.Rimworld.Ref" Version="$(Version).*-*" />
+        <PackageReference Include="Lib.Harmony" Version="2.4.1" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\Source\MGAutoSell.csproj" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <Reference Include="TD_Find_Lib">
+            <HintPath>..\..\..\..\..\workshop\content\294100\3529443295\1.7\Assemblies\TD_Find_Lib.dll</HintPath>
+            <Private>true</Private>
+        </Reference>
+    </ItemGroup>
+
+    <ItemGroup>
+        <None Include="..\..\..\Assembly-CSharp.dll" Condition="Exists('..\..\..\Assembly-CSharp.dll')" CopyToOutputDirectory="PreserveNewest" />
+        <None Include="..\..\..\UnityStubs.dll" Condition="Exists('..\..\..\UnityStubs.dll')" CopyToOutputDirectory="PreserveNewest" />
+        <None Include="..\..\..\Waylith.dll" Condition="Exists('..\..\..\Waylith.dll')" CopyToOutputDirectory="PreserveNewest" />
+        <None Include="..\..\..\Waylith.UnityCompat.dll" Condition="Exists('..\..\..\Waylith.UnityCompat.dll')" CopyToOutputDirectory="PreserveNewest" />
+        <None Include="..\..\..\RimWorld.dll" Condition="Exists('..\..\..\RimWorld.dll')" CopyToOutputDirectory="PreserveNewest" />
+    </ItemGroup>
+</Project>

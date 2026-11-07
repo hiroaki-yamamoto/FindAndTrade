@@ -1,8 +1,5 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using RimWorld;
 using RimWorld.Planet;
 using Verse;
@@ -16,60 +13,141 @@ namespace MGAutoSell.Caravans
      * Once loaded, trader finds work to get in
      *
      */
+    /// <summary>
+    /// World component that tracks player-selected settlements and shuttles for automated shuttle trading,
+    /// caching inter-tile distances for fast route evaluation.
+    /// </summary>
     public class SettlementTracker(World world) : WorldComponent(world)
     {
+        /// <summary>
+        /// Set of world settlements opted into automated shuttle trading.
+        /// </summary>
         public HashSet<Settlement> Settlements = [];
+
+        /// <summary>
+        /// Set of player shuttles opted into automated trading.
+        /// </summary>
         public HashSet<Building_PassengerShuttle> Shuttles = [];
 
         private readonly Dictionary<(Map, Settlement), float> _distanceCache = new();
 
-        private int nextTick = 0;
-
-        public Dictionary<Settlement, float> GetDistances(Map map, Pawn trader = null, Func<PlanetLayer, float> maxDistance = null, Predicate<Settlement> settlementPredicate = null)
+        /// <summary>
+        /// Computes or retrieves cached tile distances from <paramref name="map"/> to all tracked <see cref="Settlements"/>
+        /// that pass the optional <paramref name="settlementPredicate"/> exclusion filter and <paramref name="maxDistance"/> limit.
+        /// </summary>
+        /// <remarks>
+        /// Time Complexity: O(S) single pass over <see cref="Settlements"/> without intermediate list cloning or <c>RemoveAll</c>.
+        /// Space Complexity: O(K) where K is the number of eligible settlements within range.
+        /// </remarks>
+        /// <param name="map">The origin map.</param>
+        /// <param name="trader">Optional colonist negotiator to verify trade eligibility with each settlement.</param>
+        /// <param name="maxDistance">Optional callback returning the maximum allowed launch distance for a given <see cref="PlanetLayer"/>.</param>
+        /// <param name="settlementPredicate">Optional exclusion predicate; settlements returning <c>true</c> are skipped.</param>
+        /// <returns>A dictionary mapping each eligible <see cref="Settlement"/> to its distance in tiles.</returns>
+        public Dictionary<Settlement, float> GetDistances(
+            Map map,
+            Pawn trader = null,
+            Func<PlanetLayer, float> maxDistance = null,
+            Predicate<Settlement> settlementPredicate = null)
         {
             var distances = new Dictionary<Settlement, float>();
-
-            var settlements = Settlements.ToList();
-            if (settlementPredicate != null) 
-                settlements.RemoveAll(settlementPredicate);
-
-            if(!settlements.Any())
-                return distances;
-
-            foreach (var settlement in settlements)
+            if (map == null || Settlements == null || Settlements.Count == 0)
             {
-                if(trader is not null && !trader.CanTradeWith(settlement.Faction, settlement.trader.TraderKind))
-                    continue;
+                return distances;
+            }
 
-                if (!_distanceCache.TryGetValue((map, settlement), out var distance))
+            foreach (var settlement in Settlements)
+            {
+                if (settlement == null)
+                {
+                    continue;
+                }
+
+                if (settlementPredicate != null && settlementPredicate(settlement))
+                {
+                    continue;
+                }
+
+                if (trader is not null && !trader.CanTradeWith(settlement.Faction, settlement.trader.TraderKind))
+                {
+                    continue;
+                }
+
+                if (!_distanceCache.TryGetValue((map, settlement), out float distance))
                 {
                     distance = Find.WorldGrid.ApproxDistanceInTiles(map.Tile, settlement.Tile);
                     _distanceCache[(map, settlement)] = distance;
                 }
-                if(distance > maxDistance?.Invoke(settlement.Tile.Layer))
+
+                if (maxDistance != null && distance > maxDistance(settlement.Tile.Layer))
+                {
                     continue;
+                }
 
                 distances[settlement] = distance;
             }
+
             return distances;
         }
 
+        /// <summary>
+        /// Selects the best available <see cref="Building_PassengerShuttle"/> spawned on <paramref name="map"/>,
+        /// prioritizing undamaged shuttles first and higher fuel levels second.
+        /// </summary>
+        /// <remarks>
+        /// Time Complexity: O(N) single pass over <see cref="Shuttles"/> instead of O(N log N) sorting.
+        /// Space Complexity: O(1) auxiliary memory.
+        /// </remarks>
+        /// <param name="map">The map to search for shuttles.</param>
+        /// <returns>The best <see cref="Building_PassengerShuttle"/> on <paramref name="map"/>, or <c>null</c> if none are found.</returns>
         public Building_PassengerShuttle GetBestForMap(Map map)
         {
-            var shuttles = Shuttles
-                .Where(x => x.Map == map)
-                .ToList();
-
-            if(!shuttles.Any())
+            if (map == null || Shuttles == null || Shuttles.Count == 0)
+            {
                 return null;
+            }
 
-            return shuttles
-                .OrderByDescending(x => x.HitPoints >= x.def.BaseMaxHitPoints)
-                .ThenByDescending(x => x.FuelLevel)
-                .FirstOrDefault();
+            Building_PassengerShuttle best = null;
+            bool bestIsFullHealth = false;
 
+            foreach (var shuttle in Shuttles)
+            {
+                if (shuttle == null || shuttle.Map != map)
+                {
+                    continue;
+                }
+
+                bool isFullHealth = shuttle.HitPoints >= shuttle.def.BaseMaxHitPoints;
+                if (best == null)
+                {
+                    best = shuttle;
+                    bestIsFullHealth = isFullHealth;
+                    continue;
+                }
+
+                if (isFullHealth != bestIsFullHealth)
+                {
+                    if (isFullHealth)
+                    {
+                        best = shuttle;
+                        bestIsFullHealth = true;
+                    }
+
+                    continue;
+                }
+
+                if (shuttle.FuelLevel > best.FuelLevel)
+                {
+                    best = shuttle;
+                }
+            }
+
+            return best;
         }
 
+        /// <summary>
+        /// Serializes and deserializes tracked settlements and shuttles.
+        /// </summary>
         public override void ExposeData()
         {
             Scribe_Collections.Look(ref Settlements, "settlements", LookMode.Reference);
@@ -78,7 +156,5 @@ namespace MGAutoSell.Caravans
             Settlements ??= [];
             Shuttles ??= [];
         }
-
-
     }
 }
